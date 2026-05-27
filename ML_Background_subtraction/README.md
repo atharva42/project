@@ -23,4 +23,4 @@ Make sure you install these libraries by running:
 
 ```bash
 pip install numpy matplotlib opencv-python scikit-learn
-python3 2023201065_a2_q2.py
+python3 Background_sub_using_guassian.py
