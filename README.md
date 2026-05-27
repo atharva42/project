@@ -31,13 +31,14 @@ Interested in:
 - TypeScript
 
 ### AI & ML
+- Machine Learning
+- NLP
 - LLM Integration
 - Prompt Engineering
 - RAG
 - LangChain
 - LangGraph
 - OpenAI API
-- NLP
 - PyTorch
 - ChromaDB
 
@@ -57,6 +58,9 @@ Interested in:
 - Distributed Systems
 - Process Management
 - Socket Programming
+- System Design
+- Design Patterns
+- Distributed Systems
 
 ---
 
