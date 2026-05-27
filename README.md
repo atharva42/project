@@ -114,6 +114,6 @@ C++, Socket Programming, POSIX, SHA1
 
 - LinkedIn: https://www.linkedin.com/in/atharva-pande-5367632b9/
 - GitHub: https://github.com/atharva42
-- Email: atharva.pande984@gmail.com
+- Email: atharvapande984@gmail.com
 
 Humans invented distributed systems just to spend decades debugging distributed systems. I participate in this tradition professionally now.
