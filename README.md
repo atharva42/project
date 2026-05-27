@@ -2,14 +2,16 @@
 
 AI Engineer focused on building production-oriented LLM applications, backend AI systems, and retrieval-powered analytics workflows.
 
-## About
+About
 
-Currently working on enterprise AI systems involving:
-- LLM-powered Text-to-SQL workflows
-- Retrieval-Augmented Generation (RAG)
-- Prompt engineering and validation pipelines
-- Backend API development using FastAPI
-- AI workflow orchestration and structured reasoning systems
+Currently working as an AI Engineer at Axtria Pvt. Ltd., building production-oriented enterprise AI systems for analytics and business intelligence workflows.
+Presently working on enterprise AI systems involving:
+
+LLM-powered Text-to-SQL workflows
+Retrieval-Augmented Generation (RAG)
+Prompt engineering and validation pipelines
+Backend API development using FastAPI
+AI workflow orchestration and structured reasoning systems
 
 Interested in:
 - Generative AI Systems
