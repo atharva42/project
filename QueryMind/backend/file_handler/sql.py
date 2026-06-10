@@ -93,16 +93,18 @@ class SQL:
         with self.con:
             cur = self.con.cursor()
             try:
+                # Use quoted identifiers to prevent SQL injection
                 col_defs = ", ".join([
                     f'"{col}" {self._map_dtype_to_sqlite(str(df[col].dtype))}'
                     for col in df.columns
                 ])
-                cur.execute(f"DROP TABLE IF EXISTS {table_name}")
-                cur.execute(f"CREATE TABLE {table_name} ({col_defs})")
+                # Quote table name as defense in depth (already sanitized but adding extra layer)
+                cur.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+                cur.execute(f'CREATE TABLE "{table_name}" ({col_defs})')
 
                 placeholders = ", ".join(["?" for _ in df.columns])
                 cur.executemany(
-                    f"INSERT INTO {table_name} VALUES ({placeholders})",
+                    f'INSERT INTO "{table_name}" VALUES ({placeholders})',
                     df.where(pd.notnull(df), None).values.tolist()
                 )
             finally:
@@ -113,11 +115,13 @@ class SQL:
         try:
             cur.execute(query)
             result = cur.fetchall()
+            cols = [col[0] for col in cur.description] if cur.description else []
+            
             if result:
-                cols = [col[0] for col in cur.description]
                 return (result, cols)
             else:
-                return ("NO such value", [])
+                # Return empty list with column info for empty results
+                return ([], cols)
         except Exception as e:
             return (f"SQL Error: {e}", [])
         finally:
@@ -239,7 +243,7 @@ class SQL:
         """Drops a table from the SQLite database."""
         cur = self.con.cursor()
         try:
-            cur.execute(f"DROP TABLE IF EXISTS {table_name}")
+            cur.execute(f'DROP TABLE IF EXISTS "{table_name}"')
             self.con.commit()
         finally:
             cur.close()

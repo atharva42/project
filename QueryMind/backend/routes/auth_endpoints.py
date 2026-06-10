@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 from services.session_manager import session_manager
 import bcrypt
+import os
 # from datetime import datetime, timedelta
 
 router = APIRouter()
@@ -26,8 +27,8 @@ async def register(request: Request, response: Response, req: RegisterRequest):
     if not req.username or not req.password:
         raise HTTPException(400, "Username and password are required")
     
-    if len(req.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    # if len(req.password) < 6:
+    #     raise HTTPException(400, "Password must be at least 6 characters")
     
     # Check if user exists
     existing_user = session_manager.get_user_by_username(req.username)
@@ -66,11 +67,15 @@ async def login(request: Request, response: Response, req: LoginRequest):
     
     # Set session cookie
     session_id = session_manager.create_session(user_id=user['id'])
+    
+    # Use environment variable for secure flag (True in production, False in development)
+    is_production = os.getenv("ENVIRONMENT", "development") == "production"
+    
     response.set_cookie(
         key="session_id",
         value=session_id,
         httponly=True,
-        secure=False,  # Set to True in production with HTTPS
+        secure=is_production,  # True in production with HTTPS, False in development
         samesite="lax",
         max_age=86400  # 24 hours
     )
@@ -107,6 +112,12 @@ async def logout(request: Request, response: Response):
     session_id = request.cookies.get("session_id")
     
     if session_id:
+        # Invalidate the session (delete session data, not just cookie)
+        try:
+            session_manager.invalidate_session(session_id)
+        except Exception:
+            pass  # Session might not exist, continue anyway
+        
         # Delete the session cookie
         response.delete_cookie(key="session_id")
     

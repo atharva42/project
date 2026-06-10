@@ -142,11 +142,17 @@ def run_sql_pipeline(
 
         # Ensure results is a list for the response model
         safe_results = results if isinstance(results, list) else []
+        
+        # Handle empty results with user-friendly message
+        result_count = len(safe_results) if isinstance(safe_results, list) else 0
+        
         return {
             "sql_query": sql_query,
             "results": safe_results,
             "tables_used": cols,
-            "execution_time_ms": execution_time
+            "execution_time_ms": execution_time,
+            "result_count": result_count,
+            "has_results": result_count > 0
         }
 
     except Exception as e:
@@ -166,14 +172,22 @@ def run_rag_pipeline(session_id: str, question: str):
         # Query ChromaDB for relevant chunks
         rag_results = pdf_handler.query(question, n_results=5)
         
-        if not rag_results["documents"]:
-            raise HTTPException(404, "No relevant content found in documents")
+        if not rag_results["documents"] or not any(rag_results["documents"]):
+            # No relevant content found
+            execution_time = int((time.time() - start) * 1000)
+            return {
+                "answer": "I couldn't find any relevant information in the uploaded documents to answer your question. Please try rephrasing your question or check if the information exists in your documents.",
+                "context_chunks": [],
+                "sources": [],
+                "execution_time_ms": execution_time,
+                "has_results": False
+            }
         
         # Generate answer using RAG
         answer = generate_rag_answer(question, rag_results["documents"])
         
         # Extract sources
-        sources = list(set([meta["source"] for meta in rag_results["metadatas"]]))
+        sources = list(set([meta["source"] for meta in rag_results["metadatas"] if meta.get("source")]))
         
         execution_time = int((time.time() - start) * 1000)
 
@@ -181,7 +195,8 @@ def run_rag_pipeline(session_id: str, question: str):
             "answer": answer,
             "context_chunks": rag_results["documents"],
             "sources": sources,
-            "execution_time_ms": execution_time
+            "execution_time_ms": execution_time,
+            "has_results": True
         }
 
     except Exception as e:

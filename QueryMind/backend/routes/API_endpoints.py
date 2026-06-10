@@ -1,18 +1,14 @@
 # routes/query.py
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
+from dependencies.auth import CurrentUser, AuthUser, verify_session_ownership
 from models.pydantic_schema import (
     ConversationRequest,
     ChatRequest,
 )
 from services.session_manager import session_manager
 from services.health_service import get_full_health_status
-# Import the agent runner without causing a circular import.
-# ``chat_graph`` was previously imported from ``main`` which also imports this
-# module, leading to the circular import error. The actual agent execution
-# function lives in ``services.langgraph_agent`` as ``run_agent``. We alias it
-# to ``chat_graph`` to keep the existing variable name used in the endpoint.
 from services.langgraph_agent import run_agent as chat_graph
 
 
@@ -23,7 +19,7 @@ router = APIRouter()
 # <----------------Endpoints are defined below ---------------->
 
 @router.post("/session")
-async def create_session(request: Request):
+async def create_session(user: AuthUser = CurrentUser):
     """Create a new session and return its ID.
 
     The front‑end should call this endpoint when a user starts a new
@@ -32,34 +28,19 @@ async def create_session(request: Request):
     
     Requires authentication - session will be linked to the authenticated user.
     """
-    # Authenticate user
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
-    # Create session linked to this user
-    user_id = auth_status["user"]["id"]
-    session_id = session_manager.create_session(user_id=user_id)
+    session_id = session_manager.create_session(user_id=user.id)
     return {"session_id": session_id}
 
 
 @router.get("/schema/{session_id}")
-async def get_schema(request: Request, session_id: str):
+async def get_schema(session_id: str, user: AuthUser = CurrentUser):
     """Return the schema and/or loaded files for a given session.
 
     CSV sessions return schema information, PDF sessions return uploaded file
     names, and mixed sessions return both.
     """
-    # Check auth status and verify session ownership
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
-    session = session_manager.get_session(session_id)
-    
-    # Verify session belongs to this user
-    if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-        raise HTTPException(403, "Access denied: Session belongs to another user")
+    # Verify session ownership
+    session = verify_session_ownership(session_id, user)
     
     response = {}
     if session.get("schema"):
@@ -77,8 +58,9 @@ async def get_schema(request: Request, session_id: str):
     )
     return response
 
+
 @router.post("/chat")
-async def chat(request: Request, chat_request: ChatRequest):
+async def chat(chat_request: ChatRequest, user: AuthUser = CurrentUser):
     """Handle chat requests from the frontend.
 
     The original implementation incorrectly used ``ConversationRequest`` which
@@ -87,18 +69,8 @@ async def chat(request: Request, chat_request: ChatRequest):
     accept the lightweight ``ChatRequest`` model that matches the frontend
     payload.
     """
-    # Check auth status and verify session ownership
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
-    # Verify session belongs to this user
-    try:
-        session = session_manager.get_session(chat_request.session_id)
-        if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-            raise HTTPException(403, "Access denied: Session belongs to another user")
-    except ValueError:
-        raise HTTPException(404, "Session not found")
+    # Verify session ownership
+    verify_session_ownership(chat_request.session_id, user)
     
     # ``chat_graph`` is the ``run_agent`` function which returns the final answer dict.
     print("I entered the chat endpoint with request")
@@ -153,20 +125,10 @@ async def chat(request: Request, chat_request: ChatRequest):
 
 
 @router.get("/usage_tokens")
-async def usage_tokens(request: Request, session_id: str):
+async def usage_tokens(session_id: str, user: AuthUser = CurrentUser):
     """Return token usage statistics for a given session."""
-    # Check auth status and verify session ownership
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
-    # Verify session belongs to this user
-    try:
-        session = session_manager.get_session(session_id)
-        if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-            raise HTTPException(403, "Access denied: Session belongs to another user")
-    except ValueError:
-        raise HTTPException(404, "Session not found")
+    # Verify session ownership
+    verify_session_ownership(session_id, user)
     
     return session_manager.get_token_usage(session_id)
 
@@ -187,98 +149,24 @@ async def health():
     
     return health_status
 
-#implemet this after frontend
-# @router.post("/export/results")
-# async def export_results(request: ExportRequest):
-#     """Export query results to a CSV file.
-    
-#     Accepts results and column names from the frontend (avoiding a duplicate DB query),
-#     writes them to a CSV file, and returns the file for download.
-    
-#     Args:
-#         request: ExportRequest with results (list of dicts) and columns (list of str).
-    
-#     Returns:
-#         FileResponse: CSV file containing the query results.
-#     """
-#     import csv, os, uuid
-#     from fastapi.responses import FileResponse
-    
-#     file_path = f"backend/sessions/export_{uuid.uuid4().hex}.csv"
-    
-#     with open(file_path, "w", newline="") as f:
-#         writer = csv.DictWriter(f, fieldnames=request.columns)
-#         writer.writeheader()
-#         writer.writerows(request.results)
-    
-#     return FileResponse(file_path, filename="results.csv", media_type="text/csv")
-
-
-# Helper function to check auth status
-def check_auth_status(request: Request):
-    """Check if user is authenticated."""
-    print("COOKIES:", request.cookies)
-
-    session_id = request.cookies.get("session_id")
-    print("AUTH SESSION:", session_id)
-    
-    if not session_id:
-        return {"authenticated": False, "user": None}
-    
-    try:
-        session = session_manager.get_session(session_id)
-        if not session.get('user_id'):
-            return {"authenticated": False, "user": None}
-        
-        user = session_manager.get_user_by_id(session['user_id'])
-        return {
-            "authenticated": True,
-            "user": {"id": user['id'], "username": user['username']}
-        }
-    except Exception:
-        return {"authenticated": False, "user": None}
-
 
 @router.get("/conversations")
-async def get_conversations(request: Request, session_id: str = None):
+async def get_conversations(session_id: str = None, user: AuthUser = CurrentUser):
     """Get conversations for a session or all conversations for the authenticated user."""
-    # Check auth status
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
-    user_id = auth_status["user"]["id"]
-    
     if session_id:
         # Verify the session belongs to this user before returning conversations
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") != user_id:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-        except ValueError:
-            raise HTTPException(404, "Session not found")
-        
+        verify_session_ownership(session_id, user)
         return session_manager.get_conversations(session_id)
     
     # Return all conversations for this user only
-    return session_manager.get_user_conversations(user_id)
+    return session_manager.get_user_conversations(user.id)
 
 
 @router.post("/conversations/save")
-async def save_conversation(request: Request, conversation: ConversationRequest):
+async def save_conversation(conversation: ConversationRequest, user: AuthUser = CurrentUser):
     """Save a conversation."""
-    # Check auth status
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
     # Verify session belongs to this user
-    try:
-        session = session_manager.get_session(conversation.session_id)
-        if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-            raise HTTPException(403, "Access denied: Session belongs to another user")
-    except ValueError:
-        raise HTTPException(404, "Session not found")
+    verify_session_ownership(conversation.session_id, user)
     
     conv_id = f"conv_{uuid.uuid4().hex}"
     session_manager.save_conversation(
@@ -291,28 +179,16 @@ async def save_conversation(request: Request, conversation: ConversationRequest)
 
 
 @router.delete("/conversations/{conv_id}")
-async def delete_conversation(request: Request, conv_id: str, session_id: str = None):
+async def delete_conversation(conv_id: str, session_id: str = None, user: AuthUser = CurrentUser):
     """Delete conversation(s).
     
     If session_id query parameter is provided, deletes ALL conversations for that session.
     Otherwise, deletes a single conversation by conv_id (legacy behavior).
     """
-    # Check auth status
-    auth_status = check_auth_status(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
-    user_id = auth_status["user"]["id"]
-    
     # If session_id is provided, delete all conversations for that session
     if session_id:
         # Verify session belongs to this user
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") != user_id:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-        except ValueError:
-            raise HTTPException(404, "Session not found")
+        verify_session_ownership(session_id, user)
         
         session_manager.delete_all_conversations(session_id)
         return {"message": f"All conversations for session {session_id} deleted successfully"}
@@ -324,7 +200,7 @@ async def delete_conversation(request: Request, conv_id: str, session_id: str = 
         raise HTTPException(400, "Invalid conversation selected")
     
     # Verify the conversation belongs to this user by checking its session
-    conversations = session_manager.get_user_conversations(user_id)
+    conversations = session_manager.get_user_conversations(user.id)
     conv_belongs_to_user = any(c["id"] == conv_id for c in conversations)
     
     if not conv_belongs_to_user:

@@ -46,6 +46,34 @@ async def get_current_user(request: Request) -> AuthUser:
     return user
 
 
-def get_current_user_dependency():
-    """FastAPI dependency that requires authentication."""
-    return Depends(get_current_user)
+def verify_session_ownership(session_id: str, user: AuthUser) -> dict:
+    """Verify that a session belongs to the authenticated user.
+    
+    Args:
+        session_id: The session ID to verify
+        user: The authenticated user
+        
+    Returns:
+        The session dict if ownership verified
+        
+    Raises:
+        HTTPException: 404 if session not found, 403 if not owned by user
+    """
+    try:
+        session = session_manager.get_session(session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Verify ownership
+    if session.get("user_id") and session.get("user_id") != user.id:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access denied: Session belongs to another user"
+        )
+    
+    return session
+
+
+# FastAPI dependency shortcuts
+CurrentUser = Depends(get_current_user)
+OptionalUser = Depends(get_current_user_optional)

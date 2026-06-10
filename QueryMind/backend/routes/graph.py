@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from dependencies.auth import CurrentUser, AuthUser, verify_session_ownership
 from services.langgraph_agent import run_agent
 
 router = APIRouter()
@@ -19,7 +20,7 @@ class AgentQueryResponse(BaseModel):
 
 
 @router.post("/agent/query", response_model=AgentQueryResponse)
-async def agent_query(request: AgentQueryRequest):
+async def agent_query(agent_request: AgentQueryRequest, user: AuthUser = CurrentUser):
     """Query endpoint using LangGraph agent for intelligent routing.
     
     The agent will:
@@ -27,9 +28,15 @@ async def agent_query(request: AgentQueryRequest):
     2. Route to SQL, RAG, or both pipelines
     3. Combine results if needed
     4. Return a comprehensive answer
+    
+    Requires authentication and session ownership verification.
     """
+    # Verify session ownership
+    verify_session_ownership(agent_request.session_id, user)
+    
+    # Execute agent query
     try:
-        result = run_agent(request.session_id, request.question)
+        result = run_agent(agent_request.session_id, agent_request.question)
         
         return AgentQueryResponse(
             answer=result.get("answer", result),

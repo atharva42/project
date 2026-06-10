@@ -4,7 +4,7 @@ import json
 import sqlite3
 import shutil
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Configure a simple file logger for session activities
@@ -320,6 +320,55 @@ class SessionManager:
     def delete_conversation(self, conv_id: str):
         with self._get_conn() as conn:
             conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+
+    # ------------------------------------------------------------------
+    # Session expiry and cleanup
+    # ------------------------------------------------------------------
+    def cleanup_expired_sessions(self, max_age_days: int = 30):
+        """Delete sessions that haven't been accessed in max_age_days.
+        
+        This should be run periodically (e.g., daily) to clean up abandoned sessions.
+        Removes both database records and session files.
+        
+        Args:
+            max_age_days: Number of days after which inactive sessions are deleted
+        """
+        cutoff_date = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        
+        with self._get_conn() as conn:
+            # Find expired sessions
+            rows = conn.execute(
+                "SELECT session_id FROM sessions WHERE last_accessed < ?",
+                (cutoff_date,)
+            ).fetchall()
+        
+        # Delete each session and its files
+        deleted_count = 0
+        for (session_id,) in rows:
+            try:
+                self.delete_session(session_id)
+                deleted_count += 1
+                logger.info(f"Cleaned up expired session: {session_id}")
+            except Exception as e:
+                logger.error(f"Failed to cleanup session {session_id}: {e}")
+        
+        if deleted_count > 0:
+            logger.info(f"Session cleanup completed: {deleted_count} expired sessions deleted")
+        
+        return deleted_count
+
+    def invalidate_session(self, session_id: str):
+        """Immediately invalidate a session (e.g., on logout).
+        
+        This completely removes the session and all its data.
+        Use this when a user logs out to ensure the session cannot be reused.
+        """
+        try:
+            self.delete_session(session_id)
+            logger.info(f"Session invalidated: {session_id}")
+        except Exception as e:
+            logger.error(f"Failed to invalidate session {session_id}: {e}")
+            raise
 
 
 session_manager = SessionManager()

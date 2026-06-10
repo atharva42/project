@@ -7,6 +7,39 @@ from load_keys import load_config
 from services.pipeline import run_sql_pipeline, run_rag_pipeline
 
 
+def get_user_friendly_error(error_str: str) -> str:
+    """Convert technical error messages to user-friendly messages.
+    
+    Only shows errors the user can actually do something about.
+    System/configuration errors are hidden.
+    """
+    error_lower = error_str.lower()
+    
+    # Network/Service errors - user can check connection or wait
+    if "connection" in error_lower or "network" in error_lower or "timeout" in error_lower:
+        return "Unable to connect. Please check your internet connection and try again."
+    
+    if "503" in error_lower or "service unavailable" in error_lower or "unavailable" in error_lower:
+        return "Service is temporarily unavailable. Please try again in a few moments."
+    
+    # Database/Data errors - user can fix these
+    if "no database uploaded" in error_lower or "no pdf" in error_lower:
+        return "No data found. Please upload a CSV or PDF file first."
+    
+    if "session not found" in error_lower or "session expired" in error_lower:
+        return "Session expired. Please upload your data again."
+    
+    if "sql" in error_lower and ("syntax" in error_lower or "invalid" in error_lower):
+        return "I couldn't understand your question. Please try rephrasing it."
+    
+    if "context length" in error_lower or "token limit" in error_lower or "too long" in error_lower:
+        return "Your question is too complex. Please try breaking it into smaller parts."
+    
+    # Generic fallback for all other errors (API key, config, auth, etc.)
+    # Don't expose technical details the user can't fix
+    return "I'm having trouble processing your request right now. Please try again or rephrase your question."
+
+
 # Define the state schema
 class AgentState(TypedDict):
     session_id: str
@@ -45,6 +78,7 @@ TASK:
 1. Use the data metrics or factual insights provided to completely resolve the IF/THEN/ELSE conditional logic.
 2. Rewrite the query into a single, clean, highly direct request for the next execution engine.
 3. Remove all conditional syntax, numbers, or logic blocks. The next engine should only see the final command it needs to execute.
+4. Just answer the question in clean & crisp way, make sure the answer is relavant, dont ask for futher details.
 
 CRITICAL EXAMPLES:
 - If route is SQL-first: "If sales are above 60k, return stakeholder names, else return manager names."
@@ -131,8 +165,9 @@ Respond with exactly one of these words: SQL, RAG, BOTH_RAG_FIRST, BOTH_SQL_FIRS
         
     except Exception as e:
         print(f"[ROUTER] Error: {e}")
+        user_msg = get_user_friendly_error(str(e))
         state["route"] = "none"
-        state["error"] = f"Routing error: {str(e)}"
+        state["error"] = user_msg
         return state
 
 
@@ -150,8 +185,9 @@ def sql_node(state: AgentState) -> AgentState:
         print(f"[SQL NODE] Success: {len(result.get('results', []))} rows returned")
     except Exception as e:
         print(f"[SQL NODE] Error: {e}")
-        state["sql_result"] = {"error": str(e)}
-        state["error"] = f"SQL error: {str(e)}"
+        user_msg = get_user_friendly_error(str(e))
+        state["sql_result"] = {"error": user_msg}
+        state["error"] = user_msg
     
     return state
 
@@ -169,8 +205,9 @@ def rag_node(state: AgentState) -> AgentState:
         print(f"[RAG NODE] Success: Answer generated from {len(result.get('sources', []))} sources")
     except Exception as e:
         print(f"[RAG NODE] Error: {e}")
-        state["rag_result"] = {"error": str(e)}
-        state["error"] = f"RAG error: {str(e)}"
+        user_msg = get_user_friendly_error(str(e))
+        state["rag_result"] = {"error": user_msg}
+        state["error"] = user_msg
     
     return state
 
@@ -252,8 +289,9 @@ Final Answer:"""
         
     except Exception as e:
         print(f"[COMBINE NODE] Error: {e}")
+        user_msg = get_user_friendly_error(str(e))
         state["final_answer"] = {
-            "error": f"System error during final answer generation: {str(e)}",
+            "error": user_msg,
             "sql_result": sql_result,
             "rag_result": rag_result,
             "type": "error"
@@ -404,7 +442,7 @@ def run_agent(session_id: str, question: str) -> dict:
         question: User's natural language question
         
     Returns:
-        Final answer dictionary with results
+        Final answer dictionary with results and route information
     """
     initial_state = {
         "session_id": session_id,
@@ -419,12 +457,26 @@ def run_agent(session_id: str, question: str) -> dict:
     try:
         # Run the agent
         final_state = agent.invoke(initial_state)
-        return final_state["final_answer"]
+        
+        # Add route information to the final response
+        final_answer = final_state["final_answer"]
+        if isinstance(final_answer, dict):
+            final_answer["route"] = final_state["route"]
+        else:
+            # Fallback if final_answer is not a dict
+            final_answer = {
+                "answer": str(final_answer),
+                "route": final_state["route"],
+                "type": "error"
+            }
+        
+        return final_answer
         
     except Exception as e:
         print(f"[AGENT] Error: {e}")
+        user_msg = get_user_friendly_error(str(e))
         return {
-            "answer": f"An error occurred: {str(e)}",
+            "answer": user_msg,
             "type": "error",
-            "error": str(e)
+            "route": "none"
         }

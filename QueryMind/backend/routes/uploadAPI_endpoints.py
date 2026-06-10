@@ -2,8 +2,8 @@
 import io
 import os
 import pandas as pd
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
-# Use absolute imports to reference the file handler package within the backend module.
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from dependencies.auth import CurrentUser, AuthUser, verify_session_ownership
 from file_handler.sql import SQL
 from file_handler.pdf import PDFHandler
 from services.session_manager import session_manager
@@ -12,50 +12,17 @@ router = APIRouter()
 os.makedirs("./sessions", exist_ok=True)
 
 
-def check_upload_auth(request: Request):
-    """Check if user is authenticated for uploads."""
-    # Get the auth session cookie
-    auth_session_id = request.cookies.get("session_id")
-    
-    if not auth_session_id:
-        return {"authenticated": False, "user": None}
-    
-    try:
-        # This is the AUTH session, not a data session
-        auth_session = session_manager.get_session(auth_session_id)
-        if not auth_session.get('user_id'):
-            return {"authenticated": False, "user": None}
-        
-        user = session_manager.get_user_by_id(auth_session['user_id'])
-        return {
-            "authenticated": True,
-            "user": {"id": user['id'], "username": user['username']}
-        }
-    except Exception:
-        return {"authenticated": False, "user": None}
-
-
 @router.post("/upload")
-async def upload_file(request: Request, file: UploadFile = File(...), session_id: str = None):
+async def upload_file(file: UploadFile = File(...), session_id: str = None, user: AuthUser = CurrentUser):
     """
     Unified upload endpoint that routes to appropriate handler based on file type.
     
     If session_id is provided, appends to existing session (Option 1: multi-file sessions).
     If session_id is None, creates a new session.
     """
-    # Check authentication
-    auth_status = check_upload_auth(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
     # If session_id provided, verify it belongs to this user
     if session_id:
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-        except ValueError:
-            raise HTTPException(404, "Session not found")
+        verify_session_ownership(session_id, user)
     
     filename = file.filename or ""
     content_type = file.content_type or ""
@@ -64,12 +31,10 @@ async def upload_file(request: Request, file: UploadFile = File(...), session_id
     
     # Detect file type by extension
     if filename.lower().endswith(".csv"):
-        # Pass auth_status to avoid double-checking
-        return await upload_csv_internal(request, file, session_id, auth_status)
+        return await upload_csv_internal(file, session_id, user)
     
     elif filename.lower().endswith(".pdf"):
-        # Pass auth_status to avoid double-checking
-        return await upload_pdf_internal(request, file, session_id, auth_status)
+        return await upload_pdf_internal(file, session_id, user)
     
     else:
         raise HTTPException(
@@ -78,10 +43,8 @@ async def upload_file(request: Request, file: UploadFile = File(...), session_id
         )
 
 
-async def upload_csv_internal(request: Request, file: UploadFile, session_id: str, auth_status: dict):
-    """Internal CSV upload handler that receives auth_status."""
-    user_id = auth_status["user"]["id"]
-    
+async def upload_csv_internal(file: UploadFile, session_id: str, user: AuthUser):
+    """Internal CSV upload handler."""
     print(f"[UPLOAD] Processing CSV: {file.filename}")
 
     content = await file.read()
@@ -90,14 +53,9 @@ async def upload_csv_internal(request: Request, file: UploadFile, session_id: st
 
     # Check if session_id provided (append mode) or create new session
     if session_id:
-        # Validate session exists and belongs to this user
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") and session.get("user_id") != user_id:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-            print(f"[UPLOAD] Appending to existing session: {session_id}")
-        except ValueError:
-            raise HTTPException(400, f"Session {session_id} not found")
+        # Session already verified by caller
+        session = session_manager.get_session(session_id)
+        print(f"[UPLOAD] Appending to existing session: {session_id}")
         
         # Reuse existing db_path
         sql_handler = SQL([file_like], session_id)
@@ -123,7 +81,7 @@ async def upload_csv_internal(request: Request, file: UploadFile, session_id: st
         }
     else:
         # Create new session linked to this user
-        session_id = session_manager.create_session(user_id=user_id)
+        session_id = session_manager.create_session(user_id=user.id)
         print(f"[UPLOAD] Created new session: {session_id}")
 
         sql_handler = SQL([file_like], session_id)
@@ -152,43 +110,27 @@ async def upload_csv_internal(request: Request, file: UploadFile, session_id: st
 
 
 @router.post("/upload/csv")
-async def upload_csv(request: Request, file: UploadFile = File(...), session_id: str = None):
-    """Public CSV upload endpoint - checks auth and delegates to internal handler."""
-    auth_status = check_upload_auth(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
+async def upload_csv(file: UploadFile = File(...), session_id: str = None, user: AuthUser = CurrentUser):
+    """Public CSV upload endpoint."""
     # Verify session ownership if provided
     if session_id:
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-        except ValueError:
-            raise HTTPException(404, "Session not found")
+        verify_session_ownership(session_id, user)
     
-    return await upload_csv_internal(request, file, session_id, auth_status)
+    return await upload_csv_internal(file, session_id, user)
 
 
-async def upload_pdf_internal(request: Request, file: UploadFile, session_id: str, auth_status: dict):
-    """Internal PDF upload handler that receives auth_status."""
-    user_id = auth_status["user"]["id"]
-    
+async def upload_pdf_internal(file: UploadFile, session_id: str, user: AuthUser):
+    """Internal PDF upload handler."""
     print(f"[UPLOAD] Processing PDF: {file.filename}")
     
     # Check if session_id provided (append mode) or create new session
     session = None
     if session_id:
-        # Validate session exists and belongs to this user
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") and session.get("user_id") != user_id:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-            print(f"[UPLOAD] Appending PDF to existing session: {session_id}")
-        except ValueError:
-            raise HTTPException(400, f"Session {session_id} not found")
+        # Session already verified by caller
+        session = session_manager.get_session(session_id)
+        print(f"[UPLOAD] Appending PDF to existing session: {session_id}")
     else:
-        session_id = session_manager.create_session(user_id=user_id)
+        session_id = session_manager.create_session(user_id=user.id)
         session = session_manager.get_session(session_id)
         print(f"[UPLOAD] Created session: {session_id}")
     
@@ -245,19 +187,10 @@ async def upload_pdf_internal(request: Request, file: UploadFile, session_id: st
 
 
 @router.post("/upload/pdf")
-async def upload_pdf(request: Request, file: UploadFile = File(...), session_id: str = None):
-    """Public PDF upload endpoint - checks auth and delegates to internal handler."""
-    auth_status = check_upload_auth(request)
-    if not auth_status["authenticated"]:
-        raise HTTPException(401, "Not authenticated")
-    
+async def upload_pdf(file: UploadFile = File(...), session_id: str = None, user: AuthUser = CurrentUser):
+    """Public PDF upload endpoint."""
     # Verify session ownership if provided
     if session_id:
-        try:
-            session = session_manager.get_session(session_id)
-            if session.get("user_id") and session.get("user_id") != auth_status["user"]["id"]:
-                raise HTTPException(403, "Access denied: Session belongs to another user")
-        except ValueError:
-            raise HTTPException(404, "Session not found")
+        verify_session_ownership(session_id, user)
     
-    return await upload_pdf_internal(request, file, session_id, auth_status)
+    return await upload_pdf_internal(file, session_id, user)
