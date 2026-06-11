@@ -1,6 +1,15 @@
-# Intelligent Background Subtraction with Gaussian Mixture Models
+# Background Subtraction with Gaussian Mixture Models
 
-Advanced computer vision system implementing statistical background modeling for real-time object detection and tracking in surveillance applications.
+## 📋 What This Does
+
+**Background Subtraction** is a fundamental computer vision technique that automatically separates moving objects (foreground) from static scenes (background) in video sequences. This system:
+
+- **Learns** what the "normal" background looks like by analyzing multiple video frames
+- **Identifies** moving objects, people, or vehicles by comparing new frames against the learned background
+- **Extracts** foreground objects with high precision using statistical modeling
+- **Handles** complex scenarios like lighting changes, shadows, and minor background movements
+
+**Real-world Example:** In a traffic monitoring system, this would learn what an empty road looks like, then automatically detect and highlight cars, pedestrians, or cyclists as they move through the scene - enabling automated counting, speed detection, or security alerts.
 
 ## 🚀 Key Technical Highlights
 
