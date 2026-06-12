@@ -8,7 +8,7 @@ def preload_embedding_model():
     if _embedding_function is None:
         _embedding_function = (
             embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2"
+                model_name="voyage-3"
             )
         )
 
