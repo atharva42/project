@@ -7,5 +7,6 @@ def load_config():
         "api_key": os.getenv("GOOGLE_API_KEY"),
         # "endpoint": os.getenv("ENDPOINT"),
         # "deployment": os.getenv("DEPLOYMENT").
-        "model_name": os.getenv("MODEL_NAME")
+        "model_name": os.getenv("MODEL_NAME"),
+        "voyage_api_key": os.getenv("VOYAGE_API_KEY")
     }
