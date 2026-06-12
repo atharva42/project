@@ -6,6 +6,7 @@ pypdf==6.13.1
 chromadb==1.5.9
 # sentence-transformers==5.5.1
 google-genai==2.8.0
+voyageai
 # langchain-core==1.4.3
 langgraph==1.2.4
 bcrypt==5.0.0
