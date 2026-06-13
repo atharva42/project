@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import config from "../config";
 
 const API_BASE = config.API_BASE_URL;
+console.log("API_BASE:", API_BASE);  // add this
 
 const AuthContext = createContext();
 
