@@ -283,7 +283,7 @@ function MainContent() {
     }
   };
 
-  const renderMessage = (msg) => {
+  const renderMessage = (msg, msgIndex) => {
     if (msg.role === "user") {
       return (
         <div className="flex justify-end mb-4">
@@ -817,7 +817,7 @@ function MainContent() {
                 </div>
               ) : (
                 messages.map((msg, i) => (
-                  <div key={i}>{renderMessage(msg)}</div>
+                  <div key={i}>{renderMessage(msg, i)}</div>
                 ))
               )}
               <div ref={messagesEndRef} />
