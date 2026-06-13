@@ -33,3 +33,4 @@ build/
 .DS_Store
 sessions/
 archive_mds/
+.env.development
