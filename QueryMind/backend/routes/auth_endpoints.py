@@ -76,7 +76,7 @@ async def login(request: Request, response: Response, req: LoginRequest):
         value=session_id,
         httponly=True,
         secure=is_production,  # True in production with HTTPS, False in development
-        samesite="lax",
+        samesite="none" if is_production else "lax",
         max_age=86400  # 24 hours
     )
     
