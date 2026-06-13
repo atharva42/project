@@ -436,14 +436,19 @@ function MainContent() {
               </div>
             )}
             
-            {/* Route info */}
-            {msg.route && (
-              <div className="px-4 py-2 bg-purple-50 border-t border-purple-100 rounded-b-lg">
-                <span className="text-xs text-purple-600 font-medium">
-                  Route used: {msg.route.toUpperCase()}
+            {/* Execution time and route info */}
+            <div className="px-4 py-2 bg-purple-50 border-t border-purple-100 rounded-b-lg flex justify-between items-center">
+              {msg.execution_time && (
+                <span className="text-xs text-purple-600">
+                  Executed in {msg.execution_time}ms
                 </span>
-              </div>
-            )}
+              )}
+              {msg.route && (
+                <span className="text-xs text-purple-600 font-medium">
+                  Route: {msg.route.toUpperCase()}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       );
