@@ -59,7 +59,11 @@ app = FastAPI(title="Text-2-SQL API", lifespan=lifespan)
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://querymind-frontend-sx50.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],  # Only methods actually used
     allow_headers=["Content-Type", "Cookie"],  # Specific headers only
