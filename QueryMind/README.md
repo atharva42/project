@@ -1,6 +1,6 @@
 # QueryMind — Multi-Source Agentic AI Analytics Platform
 
-**🔗[Live Demo](SITE WILL GO LIVE SOON.....)**
+**🔗[Live Demo](https://querymind-frontend-sx50.onrender.com)**
 
 Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with dynamic routing, session persistence, and production-ready multi-modal query processing.
 
@@ -15,6 +15,15 @@ Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with
 - **Session-based persistence**: Multi-turn conversations with data isolation, authentication, and automatic cleanup
 
 ---
+
+## Known Limitations
+
+- - SQL queries may take 15-20 seconds due to multiple LLM calls in the pipeline. Optimization in progress (heuristic router bypass to reduce LLM calls).
+- Multi-source synthesis (SQL + RAG combined) can degrade on complex conditional queries with nested logic — refactoring to multi-hop ReAct agent planned for v2
+- Table semantic search may fail to retrieve relevant tables if descriptions are too generic — future improvement: include sample queries in embedding text
+- ChromaDB implementation is not modular — switching to Pinecone/Weaviate would require refactoring `PDFHandler` and `TableEmbeddings` classes (not just import changes)
+---
+
 
 ## Architecture
 
@@ -133,14 +142,6 @@ Each session gets isolated directory (`./sessions/{session_id}/`) containing SQL
 
 **5. SQL validation and self-repair pipeline**  
 Generated SQL passes through 3-stage validation: safety check (SELECT-only), schema validation (table/column existence), execution. Failures trigger LLM-based repair with schema context. Prevents system table access, multi-statement injection, and gracefully handles schema mismatches.
-
----
-
-## Known Limitations
-
-- Multi-source synthesis (SQL + RAG combined) can degrade on complex conditional queries with nested logic — refactoring to multi-hop ReAct agent planned for v2
-- Table semantic search may fail to retrieve relevant tables if descriptions are too generic — future improvement: include sample queries in embedding text
-- ChromaDB implementation is not modular — switching to Pinecone/Weaviate would require refactoring `PDFHandler` and `TableEmbeddings` classes (not just import changes)
 
 ---
 
