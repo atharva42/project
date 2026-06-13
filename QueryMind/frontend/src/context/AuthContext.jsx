@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import config from "../config";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = config.API_BASE_URL;
 
 const AuthContext = createContext();
 

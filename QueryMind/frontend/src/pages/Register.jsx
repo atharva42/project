@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import config from "../config";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = config.API_BASE_URL;
 
 function Register() {
   const [username, setUsername] = useState("");

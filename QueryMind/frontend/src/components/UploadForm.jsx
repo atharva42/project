@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import axios from "axios";
+import config from "../config";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = config.API_BASE_URL;
 function UploadForm({ sessionId, setSessionId, setSchema, setFileType }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);

@@ -6,8 +6,9 @@ import UploadForm from "./components/UploadForm";
 import { useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import config from "./config";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = config.API_BASE_URL;
 
 // Configure axios to send cookies with requests
 axios.defaults.withCredentials = true;
