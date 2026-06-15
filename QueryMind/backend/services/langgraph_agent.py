@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 from load_keys import load_config
 from services.pipeline import run_sql_pipeline, run_rag_pipeline
+from services.session_manager import session_manager
 
 
 def get_user_friendly_error(error_str: str) -> str:
@@ -44,6 +45,7 @@ def get_user_friendly_error(error_str: str) -> str:
 class AgentState(TypedDict):
     session_id: str
     question: str
+    session: dict | None  # cached session dict, fetched once per request
     reformulated_question: str | None
     route: Literal["sql", "rag", "both_rag_first", "both_sql_first", "none"] # Updated
     sql_result: dict | None
@@ -115,8 +117,38 @@ def router_node(state: AgentState) -> AgentState:
     - None: When the question is unclear or off-topic
     """
     question = state["question"]
-    # session_id = state["session_id"]
-    
+    session_id = state["session_id"]
+
+    # Fast path: skip the routing LLM call when the session has only one
+    # data modality. A CSV-only session can only be answered with SQL, and a
+    # PDF-only session only with RAG. The BOTH_* routes are impossible without
+    # both sources present, so the routing LLM is only needed when the session
+    # has BOTH a database and documents. This avoids a full Gemini round-trip
+    # on every query for the common single-modality case.
+    try:
+        # Reuse the session dict passed in from the endpoint (via
+        # verify_session_ownership) when available; otherwise fetch once.
+        # Store it back into state so the SQL/RAG pipelines reuse the same read.
+        session = state.get("session")
+        if session is None:
+            session = session_manager.get_session(session_id)
+        state["session"] = session
+        has_sql = bool(session.get("db_path"))
+        has_rag = bool(session.get("chroma_path"))
+    except Exception:
+        has_sql = has_rag = False
+
+    if has_sql != has_rag:  # exactly one modality present
+        forced_route = "sql" if has_sql else "rag"
+        print(f"[ROUTER] Single-modality session -> route={forced_route} (routing LLM skipped)")
+        state["route"] = forced_route
+        state["reformulated_question"] = None
+        state["sql_result"] = None
+        state["rag_result"] = None
+        state["error"] = None
+        return state
+
+    # Both sources present (or neither) -> use LLM-based routing.
     # Prompt for routing decision
     routing_prompt = f"""You are an advanced routing agent for a hybrid data system.
 Analyze the user's question and decide the correct execution route based on data dependencies.
@@ -180,7 +212,7 @@ def sql_node(state: AgentState) -> AgentState:
     print(f"[SQL NODE] Processing question: {question[:50]}...")
     
     try:
-        result = run_sql_pipeline(session_id, question)
+        result = run_sql_pipeline(session_id, question, session=state.get("session"))
         state["sql_result"] = result
         print(f"[SQL NODE] Success: {len(result.get('results', []))} rows returned")
     except Exception as e:
@@ -200,7 +232,7 @@ def rag_node(state: AgentState) -> AgentState:
     print(f"[RAG NODE] Processing question: {question[:50]}...")
     
     try:
-        result = run_rag_pipeline(session_id, question)
+        result = run_rag_pipeline(session_id, question, session=state.get("session"))
         state["rag_result"] = result
         print(f"[RAG NODE] Success: Answer generated from {len(result.get('sources', []))} sources")
     except Exception as e:
@@ -434,12 +466,15 @@ def create_agent_graph():
 agent = create_agent_graph()
 
 
-def run_agent(session_id: str, question: str) -> dict:
+def run_agent(session_id: str, question: str, session: dict = None) -> dict:
     """Run the agent for a given question.
     
     Args:
         session_id: Session ID for the user
         question: User's natural language question
+        session: Optional pre-fetched session dict (from
+            verify_session_ownership). When provided it's reused across the
+            router and pipelines, avoiding redundant get_session() reads.
         
     Returns:
         Final answer dictionary with results and route information
@@ -447,6 +482,7 @@ def run_agent(session_id: str, question: str) -> dict:
     initial_state = {
         "session_id": session_id,
         "question": question,
+        "session": session,
         "route": "none",
         "sql_result": None,
         "rag_result": None,

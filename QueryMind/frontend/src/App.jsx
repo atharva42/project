@@ -26,14 +26,13 @@ function App() {
 }
 
 function MainContent() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
   const navigate = useNavigate();
   const [sessionId, setSessionId] = useState(null);
   const [schema, setSchema] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [loadingStage, setLoadingStage] = useState("");
   const [fileType, setFileType] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [currentConvId, setCurrentConvId] = useState(null);
@@ -80,8 +79,7 @@ function MainContent() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await axios.get(`${API_BASE}/get_system_health`);
-        console.log("System health:", res.data);
+        await axios.get(`${API_BASE}/get_system_health`);
       } catch (err) {
         console.error("Health check failed:", err);
       }
@@ -90,23 +88,17 @@ function MainContent() {
   }, []);
 
   // Load conversations on mount
-  // Load conversations on mount
   useEffect(() => {
     const loadConversations = async () => {
       try {
         const res = await axios.get(`${API_BASE}/conversations`);
-        console.log("Conversations loaded:", res.data);
         setConversations(groupConversationsBySession(res.data));
       } catch (err) {
-        console.log("No conversations yet");
+        // no conversations yet
       }
     };
     loadConversations();
   }, []);
-
-  // The upload logic is now centralized in the UploadForm component.
-  // This placeholder is kept for backward compatibility but does nothing.
-  const handleUpload = async () => {};
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -124,7 +116,6 @@ function MainContent() {
     setMessages(prev => [...prev, userMessage]);
     setInput("");
     setLoading(true);
-    setLoadingStage("Routing your question...");
 
     // Add a dynamic loading message that updates
     const loadingMessageId = Date.now();
@@ -148,8 +139,7 @@ function MainContent() {
     const stageInterval = setInterval(() => {
       stageIndex = (stageIndex + 1) % stages.length;
       const newStage = stages[stageIndex];
-      setLoadingStage(newStage);
-      
+
       setMessages(prev => prev.map(msg => 
         msg.id === loadingMessageId 
           ? { ...msg, content: newStage }
@@ -248,16 +238,14 @@ function MainContent() {
       try {
         // Use the first user message as the title (first_query)
         const firstUserMessage = messages.find(m => m.role === "user")?.content || input;
-        const saveRes = await axios.post(`${API_BASE}/conversations/save`, {
+        await axios.post(`${API_BASE}/conversations/save`, {
           session_id: sessionId,
           first_query: firstUserMessage,
           messages: [...messages, userMessage, assistantMessage]
         });
-        console.log("Conversation saved:", saveRes.data);
         
         // Reload conversations to show the new one (grouped by session)
         const res = await axios.get(`${API_BASE}/conversations`);
-        console.log("Conversations after save:", res.data);
         setConversations(groupConversationsBySession(res.data));
       } catch (err) {
         console.error("Failed to save conversation:", err);
@@ -279,7 +267,6 @@ function MainContent() {
       clearInterval(stageInterval);
     } finally {
       setLoading(false);
-      setLoadingStage("");
     }
   };
 
@@ -629,19 +616,15 @@ function MainContent() {
                 </div>
                 <button 
                   onClick={async () => {
-                    try {
-                      await axios.post(`${API_BASE}/auth/logout`);
-                      localStorage.removeItem("sessionId");
-                      localStorage.removeItem("userId");
-                      setMessages([]);
-                      setSessionId(null);
-                      setSchema(null);
-                      setFileType(null);
-                      setCurrentConvId(null);
-                      navigate("/login");
-                    } catch (err) {
-                      console.error("Logout failed:", err);
-                    }
+                    // Clear app-local state, then delegate to the auth
+                    // context's logout() which posts /auth/logout, resets
+                    // the auth user (setUser(null)) and navigates to /login.
+                    setMessages([]);
+                    setSessionId(null);
+                    setSchema(null);
+                    setFileType(null);
+                    setCurrentConvId(null);
+                    await logout();
                   }}
                   className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                 >
@@ -649,11 +632,6 @@ function MainContent() {
                 </button>
               </div>
             )}
-            {/* {sessionId && (
-              <div className="text-sm">
-                <span className="text-blue-200">Session:</span> {sessionId.slice(0, 8)}...
-              </div>
-            )} */}
             {fileType && (
               <div className="text-sm">
                 <span className="text-blue-200">Data Type:</span> {fileType.toUpperCase()}

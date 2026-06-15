@@ -143,21 +143,33 @@ class SQL:
         schema_registry = self.load_schema_from_file()
         
         if schema_registry:
+            # Fetch the set of already-embedded table names ONCE. get_all_tables()
+            # does a full ChromaDB fetch + JSON parse, so calling it inside the
+            # loop meant O(N) full collection scans on every reconnect (i.e. every
+            # query). We read it a single time and track any tables we add locally.
+            # If the read fails we skip the sync entirely (matches the original
+            # behavior of not adding when the existence check errored).
+            try:
+                existing_table_names = {t.get("table_name") for t in self.table_embeddings.get_all_tables()}
+                can_sync = True
+            except Exception as e:
+                print(f"[SQL] Error reading existing embeddings: {e}")
+                existing_table_names = set()
+                can_sync = False
+
             for table_name, table_info in schema_registry.items():
                 # Store in schemas dict
                 self.schemas[table_name] = table_info
-                
-                # Add to embeddings (if not already there)
-                try:
-                    # Check if table already exists in embeddings
-                    all_tables = self.table_embeddings.get_all_tables()
-                    table_names = [t.get("table_name") for t in all_tables]
-                    
-                    if table_name not in table_names:
+
+                # Add to embeddings only if missing (and only if we could read
+                # the existing set, to avoid creating duplicates).
+                if can_sync and table_name not in existing_table_names:
+                    try:
                         self.table_embeddings.add_table(table_info)
-                except Exception as e:
-                    print(f"[SQL] Error adding table to embeddings: {e}")
-                    # Continue without embeddings for this table
+                        existing_table_names.add(table_name)
+                    except Exception as e:
+                        print(f"[SQL] Error adding table to embeddings: {e}")
+                        # Continue without embeddings for this table
             
             print(f"[SQL] Loaded {len(self.schemas)} tables from session file")
     
@@ -231,14 +243,6 @@ class SQL:
         """
         return self.table_embeddings.find_relevant_tables(user_question, n_results)
     
-    def get_all_tables_with_embeddings(self) -> list:
-        """Get all tables stored in the embeddings collection.
-        
-        Returns:
-            List of all table information dictionaries inside the code
-        """
-        return self.table_embeddings.get_all_tables()
-
     def drop_table(self, table_name):
         """Drops a table from the SQLite database."""
         cur = self.con.cursor()

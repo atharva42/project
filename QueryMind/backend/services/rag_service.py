@@ -23,6 +23,7 @@ Instructions:
 - If the context doesn't contain enough information, say "The document does not contain enough information to answer the question." and In that case
 don't give the cite/chunk information.
 - Be concise and specific and interactive in your answer, and if you can give a more detailed answer, do so.
+- Do NOT add follow-up questions, suggestions, or offers to provide more information (e.g. "Would you like to know more about...", "Let me know if...", "I can also explain..."). End your response once the question is answered.
 - Cite which chunk(s) you used if relevant along with the filename from which the chunk was extracted.
 
 Answer:"""

@@ -31,12 +31,12 @@ async def agent_query(agent_request: AgentQueryRequest, user: AuthUser = Current
     
     Requires authentication and session ownership verification.
     """
-    # Verify session ownership
-    verify_session_ownership(agent_request.session_id, user)
+    # Verify session ownership (reuse the returned session downstream)
+    session = verify_session_ownership(agent_request.session_id, user)
     
     # Execute agent query
     try:
-        result = run_agent(agent_request.session_id, agent_request.question)
+        result = run_agent(agent_request.session_id, agent_request.question, session=session)
         
         return AgentQueryResponse(
             answer=result.get("answer", result),

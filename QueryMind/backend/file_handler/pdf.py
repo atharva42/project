@@ -3,7 +3,7 @@ from pypdf import PdfReader
 import uuid
 import time
 from pathlib import Path
-from services.embedding_service import get_embedding_function
+from services.embedding_service import load_embedding_model
 
 
 class PDFHandler:
@@ -16,9 +16,7 @@ class PDFHandler:
         self.client = chromadb.PersistentClient(path=self.chroma_path)
         
         # Use sentence-transformers for local embeddings
-        start = time.time()
-        self.embedding_function = get_embedding_function()
-        print(f"the time taken to initialize embedding function: {time.time() - start}")
+        self.embedding_function = load_embedding_model()
         
         # Get or create collection
         self.collection = self.client.get_or_create_collection(

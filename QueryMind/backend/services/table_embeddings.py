@@ -5,7 +5,7 @@ import chromadb
 import json
 import uuid
 from pathlib import Path
-from services.embedding_service import get_embedding_function
+from services.embedding_service import load_embedding_model
 
 
 class TableEmbeddings:
@@ -18,7 +18,7 @@ class TableEmbeddings:
         
         # Initialize ChromaDB
         self.client = chromadb.PersistentClient(path=self.chroma_path)
-        self.embedding_function = get_embedding_function()
+        self.embedding_function = load_embedding_model()
         
         # Create or get collection for table descriptions
         self.collection = self.client.get_or_create_collection(

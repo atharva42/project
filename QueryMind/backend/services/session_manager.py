@@ -22,67 +22,90 @@ Path("./sessions").mkdir(exist_ok=True)
 
 
 class SessionManager:
-    def _get_conn(self) -> sqlite3.Connection:
+    def __init__(self):
+        # Create tables / apply migrations ONCE at process startup.
+        # session_manager = SessionManager() is instantiated at import time,
+        # so this runs before any request is served.
+        self._init_db()
+
+    def _init_db(self) -> None:
+        """Create tables and apply migrations a single time at startup.
+
+        Previously all of this DDL lived in ``_get_conn`` and therefore ran on
+        EVERY database operation (4x CREATE TABLE IF NOT EXISTS + 2x ALTER
+        TABLE that raise-and-are-caught + commit). The statements are
+        idempotent, so executing them once at process start is behaviorally
+        identical while removing that per-query overhead from every endpoint.
+        """
         conn = sqlite3.connect(SESSIONS_DB)
-        # users — user accounts for authentication
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TEXT
-            )
-        """)
-        # sessions — core session lifecycle
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                user_id INTEGER,
-                db_path TEXT,
-                schema TEXT,
-                chroma_path TEXT,
-                pdf_files TEXT,
-                created_at TEXT,
-                last_accessed TEXT,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        """)
-        # Migration: add user_id column if it doesn't exist (for existing DBs)
         try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN user_id INTEGER")
+            # users — user accounts for authentication
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT
+                )
+            """)
+            # sessions — core session lifecycle
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    user_id INTEGER,
+                    db_path TEXT,
+                    schema TEXT,
+                    chroma_path TEXT,
+                    pdf_files TEXT,
+                    created_at TEXT,
+                    last_accessed TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+            # Migration: add user_id column if it doesn't exist (for existing DBs)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN user_id INTEGER")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+            # Migration: add pdf_files column if it doesn't exist (for existing DBs)
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN pdf_files TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            # token_usage — per-query token tracking linked to session
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    session_id TEXT,
+                    query_id TEXT,
+                    tokens_question INTEGER,
+                    tokens_response INTEGER,
+                    timestamp TEXT
+                )
+            """)
+            # conversations — chat history linked to session
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    first_query TEXT,
+                    timestamp TEXT,
+                    messages TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                )
+            """)
             conn.commit()
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-        # Migration: add pdf_files column if it doesn't exist (for existing DBs)
-        try:
-            conn.execute("ALTER TABLE sessions ADD COLUMN pdf_files TEXT")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-        
-        # token_usage — per-query token tracking linked to session
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS token_usage (
-                session_id TEXT,
-                query_id TEXT,
-                tokens_question INTEGER,
-                tokens_response INTEGER,
-                timestamp TEXT
-            )
-        """)
-        # conversations — chat history linked to session
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
-                session_id TEXT,
-                first_query TEXT,
-                timestamp TEXT,
-                messages TEXT,
-                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-            )
-        """)
-        conn.commit()
-        return conn
+        finally:
+            conn.close()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        """Open a connection to the sessions DB.
+
+        Schema creation and migrations are handled once at startup by
+        ``_init_db``; this is intentionally just a connect so it stays cheap
+        on the hot path (it's called by every session/token/conversation op).
+        """
+        return sqlite3.connect(SESSIONS_DB)
 
     def get_session_logger(self, session_id: str) -> logging.Logger:
         """Return a logger that writes to a file inside the session directory.

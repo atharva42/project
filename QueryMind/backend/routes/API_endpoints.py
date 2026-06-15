@@ -69,12 +69,13 @@ async def chat(chat_request: ChatRequest, user: AuthUser = CurrentUser):
     accept the lightweight ``ChatRequest`` model that matches the frontend
     payload.
     """
-    # Verify session ownership
-    verify_session_ownership(chat_request.session_id, user)
+    # Verify session ownership (returns the session dict so downstream
+    # router/pipelines can reuse it instead of re-reading from the DB).
+    session = verify_session_ownership(chat_request.session_id, user)
     
     # ``chat_graph`` is the ``run_agent`` function which returns the final answer dict.
     print("I entered the chat endpoint with request")
-    result = chat_graph(chat_request.session_id, chat_request.question)
+    result = chat_graph(chat_request.session_id, chat_request.question, session=session)
     print("I exited successfully!")
 
     # The agent returns the final_answer dict directly - return it without extra nesting

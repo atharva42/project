@@ -10,7 +10,7 @@ from routes.uploadAPI_endpoints import router as upload_router
 from routes.API_endpoints import router as query_router
 from routes.auth_endpoints import router as auth_router
 from routes.graph import router as graph_router
-from services.embedding_service import preload_embedding_model
+from services.embedding_service import load_embedding_model
 from services.session_manager import session_manager
 from contextlib import asynccontextmanager
 import time
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     # Preload embedding model on startup
     start_time = time.time()
     print("Loading embedding model...")
-    preload_embedding_model()
+    load_embedding_model()
     print(f"Embedding model loaded in {time.time() - start_time:.2f} seconds")
     
     # Run initial cleanup on startup
@@ -62,6 +62,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
+        "http://localhost:8001",
         "https://querymind-frontend-sx50.onrender.com"
     ],
     allow_credentials=True,

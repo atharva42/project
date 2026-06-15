@@ -6,8 +6,6 @@ const API_BASE = config.API_BASE_URL;
 function UploadForm({ sessionId, setSessionId, setSchema, setFileType }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
-  // When the parent does not manage sessionId, we keep a local copy.
-  const [localSessionId, setLocalSessionId] = useState(sessionId || "");
   const fileInputRef = React.useRef(null);
 
   const handleSubmit = async (e) => {
@@ -27,10 +25,6 @@ function UploadForm({ sessionId, setSessionId, setSchema, setFileType }) {
       // Store the session ID returned from the backend for future uploads
       const newSessionId = res.data.session_id;
       setSessionId(newSessionId);
-      // Also keep a local copy if the parent does not manage it
-      if (!setSessionId) {
-        setLocalSessionId(newSessionId);
-      }
       setFileType(res.data.file_type);
       
       // Merge schema and file metadata for the current session

@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import config from "../config";
 
 const API_BASE = config.API_BASE_URL;
-console.log("API_BASE:", API_BASE);  // add this
 
 const AuthContext = createContext();
 
@@ -35,9 +34,6 @@ export function AuthProvider({ children }) {
       password,
     });
     
-    localStorage.setItem("sessionId", response.data.session_id);
-    localStorage.setItem("userId", response.data.user_id);
-    
     // Fetch user data after login
     const statusResponse = await axios.get(`${API_BASE}/auth/status`);
     if (statusResponse.data.authenticated) {
@@ -61,8 +57,6 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.error("Logout failed:", err);
     } finally {
-      localStorage.removeItem("sessionId");
-      localStorage.removeItem("userId");
       setUser(null);
       navigate("/login");
     }
@@ -86,22 +80,4 @@ export function useAuth() {
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
-}
-
-export function RequireAuth({ children }) {
-  const { user, loading } = useAuth();
-  
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-500">Loading...</div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return null; // Will be redirected by App.jsx
-  }
-
-  return children;
 }
