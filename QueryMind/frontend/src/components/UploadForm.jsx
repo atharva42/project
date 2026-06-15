@@ -3,7 +3,7 @@ import axios from "axios";
 import config from "../config";
 
 const API_BASE = config.API_BASE_URL;
-function UploadForm({ sessionId, setSessionId, setSchema, setFileType }) {
+function UploadForm({ sessionId, setSessionId, setSchema, setFileType, isDemoSession }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const fileInputRef = React.useRef(null);
@@ -16,8 +16,12 @@ function UploadForm({ sessionId, setSessionId, setSchema, setFileType }) {
     formData.append("file", file);
     
     try {
-      // Include the existing session ID (if any) so the backend can append to the same session
-      const uploadUrl = sessionId ? `${API_BASE}/upload?session_id=${sessionId}` : `${API_BASE}/upload`;
+      // Include the existing session ID (if any) so the backend can append to the same session.
+      // TEMPORARY DEMO FEATURE: never append to a shared demo session — start a
+      // fresh user-owned session instead so per-user isolation is preserved.
+      // Remove `&& !isDemoSession` (and the prop) when removing the demo feature.
+      const appendToSession = sessionId && !isDemoSession;
+      const uploadUrl = appendToSession ? `${API_BASE}/upload?session_id=${sessionId}` : `${API_BASE}/upload`;
       const res = await axios.post(uploadUrl, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -26,6 +30,12 @@ function UploadForm({ sessionId, setSessionId, setSchema, setFileType }) {
       const newSessionId = res.data.session_id;
       setSessionId(newSessionId);
       setFileType(res.data.file_type);
+
+      // TEMPORARY DEMO FEATURE: when uploading away from a demo session, drop the
+      // demo's schema so it isn't merged into the new session's display.
+      if (isDemoSession) {
+        setSchema(null);
+      }
       
       // Merge schema and file metadata for the current session
       setSchema(prev => {

@@ -75,3 +75,7 @@ app.include_router(auth_router)
 app.include_router(upload_router)
 app.include_router(query_router)
 app.include_router(graph_router)
+
+# TEMPORARY DEMO FEATURE (remove with routes/demo.py) — preloaded datasets
+from routes.demo import router as demo_router
+app.include_router(demo_router)

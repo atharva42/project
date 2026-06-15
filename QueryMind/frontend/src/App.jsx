@@ -37,6 +37,8 @@ function MainContent() {
   const [conversations, setConversations] = useState([]);
   const [currentConvId, setCurrentConvId] = useState(null);
   const [expandedResults, setExpandedResults] = useState({}); // Track expanded state per message
+  // TEMPORARY DEMO FEATURE — one combined preloaded session (remove with backend routes/demo.py)
+  const [demoSession, setDemoSession] = useState(null);
   const messagesEndRef = useRef(null);
 
   // Group conversations by session_id and return one entry per session (latest by timestamp)
@@ -99,6 +101,44 @@ function MainContent() {
     };
     loadConversations();
   }, []);
+
+  // TEMPORARY DEMO FEATURE — load the combined preloaded session on mount and
+  // provide a one-click loader. Remove this block (and backend routes/demo.py).
+  useEffect(() => {
+    const loadDemoInfo = async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/demo/datasets`);
+        const demo = res.data && res.data.session_id ? res.data : null;
+        setDemoSession(demo);
+        // Auto-select the demo session so the chat input is usable immediately
+        // (the input is gated on `sessionId`). On mount no session is active
+        // yet. When this temporary block is removed, nothing auto-selects and
+        // the input reverts to being disabled until the user uploads a file.
+        if (demo) {
+          loadDemoSession(demo);
+        }
+      } catch (err) {
+        // demo feature unavailable; ignore
+      }
+    };
+    loadDemoInfo();
+  }, []);
+
+  const loadDemoSession = async (demo) => {
+    setMessages([]);
+    setCurrentConvId(null);
+    setSessionId(demo.session_id);
+    try {
+      const schemaRes = await axios.get(`${API_BASE}/schema/${demo.session_id}`);
+      setFileType(schemaRes.data.file_type || "csv & pdf");
+      setSchema({
+        schema: schemaRes.data.schema || null,
+        files: schemaRes.data.files || null,
+      });
+    } catch (e) {
+      setSchema(null);
+    }
+  };
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -647,7 +687,7 @@ function MainContent() {
           <div className="lg:col-span-1 space-y-4">
             <div className="bg-white rounded-lg shadow p-4">
               <h2 className="font-bold text-gray-800 mb-3">Upload Data</h2>
-                <UploadForm sessionId={sessionId} setSessionId={setSessionId} setSchema={setSchema} setFileType={setFileType} />
+                <UploadForm sessionId={sessionId} setSessionId={setSessionId} setSchema={setSchema} setFileType={setFileType} isDemoSession={demoSession?.session_id === sessionId} />{/* isDemoSession is TEMPORARY DEMO FEATURE — remove the prop with the demo code */}
               
               {schema && (
                 <div className="mt-4">
@@ -678,6 +718,49 @@ function MainContent() {
                 </div>
               )}
             </div>
+
+            {/* TEMPORARY DEMO FEATURE — combined preloaded session.
+                Remove this whole block (and backend routes/demo.py) to delete. */}
+            {demoSession && (
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex justify-between items-center mb-1">
+                  <h2 className="font-bold text-gray-800">Demo Dataset</h2>
+                  <button
+                    onClick={() => loadDemoSession(demoSession)}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      sessionId === demoSession.session_id
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
+                  >
+                    {sessionId === demoSession.session_id ? 'Loaded' : 'Load'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mb-3">
+                  One session with CSV + PDF data — try SQL, document, and combined questions. No upload needed.
+                </p>
+                <div className="space-y-2">
+                  {demoSession.files.map((f) => (
+                    <div
+                      key={f.name}
+                      className="flex items-center gap-2 rounded border bg-gray-50 border-gray-200"
+                    >
+                      <span className="flex-1 px-3 py-2 text-sm text-gray-700 truncate">
+                        <span className="font-medium">{f.name}</span>
+                        <span className="ml-2 text-xs text-gray-400">{f.file_type?.toUpperCase()}</span>
+                      </span>
+                      <button
+                        onClick={() => window.open(`${API_BASE}/demo/file/${encodeURIComponent(f.name)}`, '_blank')}
+                        title="View file contents in a new tab"
+                        className="px-3 py-2 text-xs font-medium text-blue-600 hover:text-blue-800 border-l border-gray-200"
+                      >
+                        View
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {sessionId && (
               <div className="bg-white rounded-lg shadow p-4">

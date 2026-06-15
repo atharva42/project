@@ -34,3 +34,8 @@ build/
 sessions/
 archive_mds/
 .env.development
+
+# TEMPORARY DEMO FEATURE — runtime registry, regenerated on each server (don't commit)
+backend/demo_sessions.json
+# Runtime query log
+backend/query_log.json
