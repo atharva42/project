@@ -20,7 +20,6 @@ Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with
 
 - Multi-source synthesis (SQL + RAG combined) can degrade on complex conditional queries with nested logic — refactoring to multi-hop ReAct agent planned for v2
 - Table semantic search may fail to retrieve relevant tables if descriptions are too generic — future improvement: include sample queries in embedding text
-- ChromaDB implementation is not modular — switching to Pinecone/Weaviate would require refactoring `PDFHandler` and `TableEmbeddings` classes (not just import changes)
 ---
 
 
