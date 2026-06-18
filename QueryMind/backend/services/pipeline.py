@@ -247,8 +247,8 @@ def run_rag_pipeline(session_id: str, question: str, session: dict = None):
                 "has_results": False
             }
         
-        # Generate answer using RAG
-        answer = generate_rag_answer(question, rag_results["documents"])
+        # Generate answer using RAG — pass metadatas so the LLM can cite filenames
+        answer = generate_rag_answer(question, rag_results["documents"], rag_results["metadatas"])
         
         # Extract sources
         sources = list(set([meta["source"] for meta in rag_results["metadatas"] if meta.get("source")]))

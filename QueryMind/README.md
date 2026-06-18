@@ -16,11 +16,36 @@ Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with
 
 ---
 
-## Known Limitations
+## ⚠️ Disclaimer: Free-Tier Resources
 
-- Multi-source synthesis (SQL + RAG combined) can degrade on complex conditional queries with nested logic — refactoring to multi-hop ReAct agent planned for v2
-- Table semantic search may fail to retrieve relevant tables if descriptions are too generic — future improvement: include sample queries in embedding text
-- ChromaDB implementation is not modular — switching to Pinecone/Weaviate would require refactoring `PDFHandler` and `TableEmbeddings` classes (not just import changes)
+This project is running on **free-tier resources**:
+- **Embeddings**: Google Gemini Embedding (free tier) — limited to 3 requests per minute and 10K tokens per minute
+- **LLM Calls**: Google Gemini 2.5 Flash API (free tier) — subject to quota and rate limits
+- **Hosting**: Frontend and backend on free-tier cloud platforms with CPU/memory throttling
+
+If you experience timeouts, "rate limit exceeded" errors, or degraded performance, **please try again after a few minutes**. The system will recover as the rate-limit window resets.
+
+---
+
+## How We Handle Complex Multi-Source Queries
+
+When your question requires data from both CSV and PDF sources (e.g., "If Chinese employees > 3000, give me the email from the document"), QueryMind tackles this using **query decomposition**:
+
+1. **Router** determines the order: which source provides the condition, which provides the answer
+2. **First Pipeline** (SQL or RAG) executes the condition query and returns a result
+3. **Reformulator** injects that result into the original question, resolving the IF/THEN logic
+4. **Second Pipeline** (the opposite source) executes the refined action query with condition context
+5. **Combine** node synthesizes both results into a unified answer
+
+This two-stage approach with **query decomposition** avoids the need for complex multi-hop reasoning — the LLM sees the condition result as context, making the second step deterministic and accurate.
+
+---
+
+## Known Limitations & Edge Cases
+
+- **API rate limiting**: Free tier limits to 3 embedding requests/min. Heavy usage or parallel sessions will hit rate limits.
+- **Single-source misclassification**: In some occasional events the Router may misclassify multi-source questions, routing to SQL-only or RAG-only when both are needed. This may happen if the question is vague. In that case Rephrase the question to clarify which data sources should be used.
+- **SQL hallucination**: Generated SQL may reference non-existent columns or use incorrect logic. Review generated SQL in the "Database Query Details" section.
 ---
 
 
@@ -94,9 +119,11 @@ Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with
 - **`none`** → **FINALIZE** (direct path, returns error message for unrecognized questions)
 - **`sql`** → **FINALIZE** (direct path, returns SQL result)
 - **`rag`** → **FINALIZE** (direct path, returns RAG answer)
-- **`both_rag_first`**: rag → reformulator → sql → combine → **FINALIZE**
-- **`both_sql_first`**: sql → reformulator → rag → combine → **FINALIZE**
+- **`both_parallel`**: parallel → combine → **FINALIZE** (both SQL and RAG execute independently on same question, results merged)
+- **`both_rag_first`**: rag → reformulator → sql → combine → **FINALIZE** (RAG evaluates condition first, SQL retrieves final answer)
+- **`both_sql_first`**: sql → reformulator → rag → combine → **FINALIZE** (SQL evaluates condition first, RAG retrieves final answer)
 - **Reformulator** resolves conditional logic (IF/THEN) by injecting first pipeline's results into query rewrite
+- **Combine** synthesizes results from both pipelines into unified answer
 
 ---
 
@@ -113,8 +140,8 @@ Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with
 
 **Data & Storage**
 - SQLite — session-isolated databases for CSV→table storage
-- ChromaDB — persistent vector store for PDF embeddings (per-session isolation)
-- Sentence Transformers (`all-MiniLM-L6-v2`) — local embedding generation
+- ChromaDB — persistent vector store for PDF embeddings and table description semantic search (per-session isolation)
+- Google Gemini Embedding (`gemini-embedding-001`) — embedding generation for both PDF chunks and table descriptions
 - sqlglot — SQL parsing and validation
 
 **Frontend**
@@ -130,8 +157,8 @@ Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with
 **1. Custom pipelines over LangChain abstractions**  
 Built SQL and RAG pipelines directly using source libraries (ChromaDB, Sentence Transformers, Gemini API) instead of LangChain wrappers. LangGraph used purely for agent orchestration (StateGraph, conditional routing). Result: full control over pipeline behavior, no black-box abstractions, easier debugging, faster execution without middleware overhead.
 
-**2. Dynamic routing with conditional query reformulation**  
-Router node uses Gemini with structured output validation (enum schema enforcement) to classify queries into 5 routes. Multi-source routes (`both_rag_first`/`both_sql_first`) execute pipelines sequentially with a reformulator node that rewrites the original question by injecting results from the first pipeline, enabling complex conditional logic handling (e.g., "If sales > 60k, return stakeholder names from PDFs").
+**2. Dynamic routing with conditional query decomposition**  
+Router node uses Gemini with structured output validation (enum schema enforcement) to classify queries into 5 routes. Multi-source routes (`both_rag_first`/`both_sql_first`) use **query decomposition**: the router splits the original question into a CONDITION (the IF part) and an ACTION (the THEN part), annotating which source each belongs to. The CONDITION executes first; its result is injected into the original question and passed to a reformulator node, which rewrites it into a clean ACTION query for the second pipeline. This two-stage execution with context injection enables complex conditional logic (e.g., "If sales > 60k, return stakeholder names from PDFs") without multi-hop reasoning—the LLM sees the condition result as deterministic context.
 
 **3. Semantic table search with dual-level embeddings**  
 CSV tables get LLM-generated descriptions embedded in separate ChromaDB collection (`table_embeddings.py`). Query generation uses semantic search to find top-N relevant tables before generating SQL, reducing context size and improving accuracy for multi-table databases.
@@ -150,23 +177,52 @@ Generated SQL passes through 3-stage validation: safety check (SELECT-only), sch
 QueryMind/
 ├── backend/
 │   ├── dependencies/        # Auth middleware (session verification)
+│   │   └── auth.py
 │   ├── file_handler/        # CSV→SQLite, PDF→ChromaDB processors
+│   │   ├── pdf.py
+│   │   └── sql.py
 │   ├── models/              # Pydantic schemas
-│   ├── routes/              # FastAPI endpoints (auth, upload, query, graph)
-│   ├── services/            # Core logic (pipelines, embeddings, session manager, LangGraph agent)
+│   │   └── pydantic_schema.py
+│   ├── routes/              # FastAPI endpoints
+│   │   ├── auth_endpoints.py
+│   │   ├── API_endpoints.py      # /chat endpoint
+│   │   ├── uploadAPI_endpoints.py
+│   │   └── graph.py
+│   ├── services/            # Core business logic
+│   │   ├── embedding_service.py      # Gemini embedding wrapper
+│   │   ├── health_service.py
+│   │   ├── langgraph_agent.py        # Agent state machine + router/reformulator/combine
+│   │   ├── pipeline.py               # SQL + RAG pipeline orchestration
+│   │   ├── rag_service.py
+│   │   ├── session_manager.py        # User + session persistence
+│   │   ├── sql_service.py
+│   │   ├── table_embeddings.py       # Semantic table search
+│   │   ├── langchain_tools.py
+│   │   └── tools/
 │   ├── validations/         # SQL validation and repair
 │   ├── main.py              # FastAPI app entry point
-│   └── load_keys.py         # Environment config loader
+│   ├── load_keys.py         # Environment config loader
+│   ├── requirements.txt
+│   └── Dockerfile
 ├── frontend/
 │   ├── src/
-│   │   ├── components/      # UploadForm
-│   │   ├── context/         # AuthContext
-│   │   ├── pages/           # Login, Register
-│   │   ├── App.jsx          # Main chat interface
+│   │   ├── components/      # UploadForm, Chat, Message components
+│   │   ├── context/         # AuthContext, session state
+│   │   ├── pages/           # Login, Register pages
+│   │   ├── App.jsx          # Main chat interface + combined route rendering
+│   │   ├── config.js        # API base URL
+│   │   ├── index.css
 │   │   └── main.jsx         # React entry point
-│   └── package.json
-└── sessions/                # Runtime: per-session data (gitignored)
+│   ├── package.json
+│   └── vite.config.js
+└── Root config files
+    ├── .env                 # Google API key (gitignored)
+    ├── .env.development
+    ├── .gitignore
+    └── README.md
 ```
+
+**Note**: Runtime directories (`sessions/`, `__pycache__/`, `venv/`) and runtime files (`.env`, logs, query_log.json) are excluded from this structure as they are gitignored or auto-generated.
 
 ---
 

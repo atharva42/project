@@ -21,91 +21,76 @@ SESSIONS_DB = "./sessions/sessions.db"
 Path("./sessions").mkdir(exist_ok=True)
 
 
+_migrations_done = False
+
 class SessionManager:
-    def __init__(self):
-        # Create tables / apply migrations ONCE at process startup.
-        # session_manager = SessionManager() is instantiated at import time,
-        # so this runs before any request is served.
-        self._init_db()
-
-    def _init_db(self) -> None:
-        """Create tables and apply migrations a single time at startup.
-
-        Previously all of this DDL lived in ``_get_conn`` and therefore ran on
-        EVERY database operation (4x CREATE TABLE IF NOT EXISTS + 2x ALTER
-        TABLE that raise-and-are-caught + commit). The statements are
-        idempotent, so executing them once at process start is behaviorally
-        identical while removing that per-query overhead from every endpoint.
-        """
-        conn = sqlite3.connect(SESSIONS_DB)
-        try:
-            # users — user accounts for authentication
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    created_at TEXT
-                )
-            """)
-            # sessions — core session lifecycle
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS sessions (
-                    session_id TEXT PRIMARY KEY,
-                    user_id INTEGER,
-                    db_path TEXT,
-                    schema TEXT,
-                    chroma_path TEXT,
-                    pdf_files TEXT,
-                    created_at TEXT,
-                    last_accessed TEXT,
-                    FOREIGN KEY (user_id) REFERENCES users(id)
-                )
-            """)
-            # Migration: add user_id column if it doesn't exist (for existing DBs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN user_id INTEGER")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            # Migration: add pdf_files column if it doesn't exist (for existing DBs)
-            try:
-                conn.execute("ALTER TABLE sessions ADD COLUMN pdf_files TEXT")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-            # token_usage — per-query token tracking linked to session
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS token_usage (
-                    session_id TEXT,
-                    query_id TEXT,
-                    tokens_question INTEGER,
-                    tokens_response INTEGER,
-                    timestamp TEXT
-                )
-            """)
-            # conversations — chat history linked to session
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT,
-                    first_query TEXT,
-                    timestamp TEXT,
-                    messages TEXT,
-                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-                )
-            """)
-            conn.commit()
-        finally:
-            conn.close()
-
     def _get_conn(self) -> sqlite3.Connection:
-        """Open a connection to the sessions DB.
-
-        Schema creation and migrations are handled once at startup by
-        ``_init_db``; this is intentionally just a connect so it stays cheap
-        on the hot path (it's called by every session/token/conversation op).
-        """
-        return sqlite3.connect(SESSIONS_DB)
+        global _migrations_done
+        conn = sqlite3.connect(SESSIONS_DB)
+        # users — user accounts for authentication
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT
+            )
+        """)
+        # sessions — core session lifecycle
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                user_id INTEGER,
+                db_path TEXT,
+                schema TEXT,
+                chroma_path TEXT,
+                pdf_files TEXT,
+                pdf_summaries TEXT,
+                created_at TEXT,
+                last_accessed TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        # Run schema migrations once per process lifetime — not on every
+        # connection. ALTER TABLE on an existing column raises OperationalError,
+        # which we catch, but running it hundreds of times per session wastes
+        # time on expected failures.
+        if not _migrations_done:
+            for col_def in [
+                "ALTER TABLE sessions ADD COLUMN user_id INTEGER",
+                "ALTER TABLE sessions ADD COLUMN pdf_files TEXT",
+                "ALTER TABLE sessions ADD COLUMN pdf_summaries TEXT",
+            ]:
+                try:
+                    conn.execute(col_def)
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            _migrations_done = True
+        
+        # token_usage — per-query token tracking linked to session
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                session_id TEXT,
+                query_id TEXT,
+                tokens_question INTEGER,
+                tokens_response INTEGER,
+                timestamp TEXT
+            )
+        """)
+        # conversations — chat history linked to session
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                first_query TEXT,
+                timestamp TEXT,
+                messages TEXT,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+            )
+        """)
+        conn.commit()
+        return conn
 
     def get_session_logger(self, session_id: str) -> logging.Logger:
         """Return a logger that writes to a file inside the session directory.
@@ -131,8 +116,8 @@ class SessionManager:
         now = datetime.now().isoformat()
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO sessions (session_id, user_id, db_path, schema, chroma_path, pdf_files, created_at, last_accessed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (session_id, user_id, None, None, None, None, now, now)
+                "INSERT INTO sessions (session_id, user_id, db_path, schema, chroma_path, pdf_files, pdf_summaries, created_at, last_accessed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (session_id, user_id, None, None, None, None, None, now, now)
             )
         logger.info(f"Created new session {session_id} for user_id={user_id}")
         return session_id
@@ -140,7 +125,7 @@ class SessionManager:
     def get_session(self, session_id: str) -> dict:
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT session_id, user_id, db_path, schema, chroma_path, pdf_files, created_at, last_accessed FROM sessions WHERE session_id = ?",
+                "SELECT session_id, user_id, db_path, schema, chroma_path, pdf_files, pdf_summaries, created_at, last_accessed FROM sessions WHERE session_id = ?",
                 (session_id,)
             ).fetchone()
             if not row:
@@ -156,8 +141,9 @@ class SessionManager:
             "schema": json.loads(row[3]) if row[3] else None,
             "chroma_path": row[4],
             "pdf_files": json.loads(row[5]) if row[5] else None,
-            "created_at": row[6],
-            "last_accessed": row[7]
+            "pdf_summaries": json.loads(row[6]) if row[6] else {},
+            "created_at": row[7],
+            "last_accessed": row[8]
         }
 
     def update_session(self, session_id: str, data: dict):
@@ -175,6 +161,9 @@ class SessionManager:
         if "pdf_files" in data:
             fields.append("pdf_files = ?")
             values.append(json.dumps(data["pdf_files"]))
+        if "pdf_summaries" in data:
+            fields.append("pdf_summaries = ?")
+            values.append(json.dumps(data["pdf_summaries"]))
         if not fields:
             return
         values.append(session_id)

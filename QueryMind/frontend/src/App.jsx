@@ -235,6 +235,7 @@ function MainContent() {
             sql_result: res.data.sql_result,
             rag_result: res.data.rag_result,
             route: res.data.route,
+            execution_time: res.data.execution_time_ms,
             type: "combined"
           };
         } else if (fileType === "pdf" || res.data.type === "rag") {
@@ -385,8 +386,14 @@ function MainContent() {
                 {msg.sql_result && (
                   <details className="border rounded p-2">
                     <summary className="cursor-pointer font-medium text-gray-700">Database Query Details</summary>
-                    <div className="mt-2 text-sm">
-                      <pre className="bg-gray-100 p-2 rounded text-xs">{msg.sql_result.sql_query}</pre>
+                    <div className="mt-2 text-sm min-w-0">
+                      {/* Format SQL by inserting newlines before major keywords, then wrap */}
+                      <pre className="bg-gray-100 p-2 rounded text-xs whitespace-pre-wrap break-all overflow-x-auto">
+                        {(msg.sql_result.sql_query || "")
+                          .replace(/\b(SELECT|FROM|WHERE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ON|AND|OR|GROUP BY|ORDER BY|HAVING|LIMIT|UNION|CASE|WHEN|THEN|ELSE|END)\b/gi,
+                            (kw) => "\n" + kw)
+                          .trimStart()}
+                      </pre>
                       {msg.sql_result.results && msg.sql_result.results.length > 0 && (
                         <p className="mt-1 text-gray-600">{msg.sql_result.results.length} rows found</p>
                       )}
@@ -410,14 +417,19 @@ function MainContent() {
               </div>
             </div>
             
-            {/* Route info */}
-            {msg.route && (
-              <div className="px-4 py-2 bg-gradient-to-r from-purple-50 to-blue-50 border-t border-gray-200 rounded-b-lg">
-                <span className="text-xs text-purple-600 font-medium">
-                  Route used: {msg.route.toUpperCase()}
+            {/* Route info + execution time footer — flex-wrap so they stack on narrow cards */}
+            <div className="px-4 py-2 bg-gradient-to-r from-purple-50 to-blue-50 border-t border-gray-200 rounded-b-lg flex flex-wrap justify-between items-center gap-y-1">
+              {msg.execution_time && (
+                <span className="text-xs text-purple-600">
+                  Executed in {msg.execution_time}ms
                 </span>
-              </div>
-            )}
+              )}
+              {msg.route && (
+                <span className="text-xs text-purple-600 font-medium">
+                  Route: {msg.route.toUpperCase()} (CSV + RAG)
+                </span>
+              )}
+            </div>
           </div>
         </div>
       );
@@ -943,16 +955,6 @@ function MainContent() {
                 <p className="text-center text-sm text-red-500 mt-2">
                   Please upload a file first to start querying
                 </p>
-              )}
-              {loading && (
-                <div className="text-center text-sm text-blue-500 mt-2 flex items-center justify-center space-x-2">
-                  <div className="flex space-x-1">
-                    <div className="w-1 h-1 bg-blue-500 rounded-full animate-bounce"></div>
-                    <div className="w-1 h-1 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                    <div className="w-1 h-1 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                  </div>
-                  <span>QueryMind is working on your request...</span>
-                </div>
               )}
               <div className="flex items-center justify-between text-xs text-gray-400 mt-2">
                 <span>Press Enter to send • Shift+Enter for new line</span>

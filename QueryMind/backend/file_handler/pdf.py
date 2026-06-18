@@ -3,7 +3,12 @@ from pypdf import PdfReader
 import uuid
 import time
 from pathlib import Path
+from google import genai
+from load_keys import load_config
 from services.embedding_service import load_embedding_model
+
+_config = load_config()
+_client = genai.Client(api_key=_config.get("api_key"))
 
 
 class PDFHandler:
@@ -16,7 +21,9 @@ class PDFHandler:
         self.client = chromadb.PersistentClient(path=self.chroma_path)
         
         # Use sentence-transformers for local embeddings
+        start = time.time()
         self.embedding_function = load_embedding_model()
+        print(f"the time taken to initialize embedding function: {time.time() - start}")
         
         # Get or create collection
         self.collection = self.client.get_or_create_collection(
@@ -44,8 +51,13 @@ class PDFHandler:
         
         return chunks
     
-    def add_pdf(self, pdf_file, filename: str):
-        """Process PDF and add to ChromaDB."""
+    def add_pdf(self, pdf_file, filename: str) -> tuple[int, str]:
+        """Process PDF and add to ChromaDB.
+        
+        Returns:
+            (num_chunks, extracted_text) — text is returned so the caller can
+            pass it to generate_summary without reading the file a second time.
+        """
         # Extract text
         text = self.extract_text_from_pdf(pdf_file)
         
@@ -63,8 +75,75 @@ class PDFHandler:
             metadatas=metadatas
         )
         
-        return len(chunks)
+        return len(chunks), text
     
+    def generate_summary(self, text: str, filename: str) -> str:
+        """Generate a routing-optimized summary of the document using an LLM.
+
+        The summary is designed to help the routing agent decide whether to
+        search this document for a given user question — without the agent
+        seeing the document itself. It is generated once at upload time so
+        there is zero cost at query time.
+
+        Args:
+            text: Full extracted text of the PDF.
+            filename: Original filename (used as context in the prompt).
+
+        Returns:
+            A concise routing-oriented summary string, or an empty string if
+            generation fails (so a missing summary never breaks routing).
+        """
+        # Use first ~3000 words + last ~500 words to cover intro and conclusion
+        # without blowing the token budget.
+        words = text.split()
+        if len(words) > 3500:
+            sample_words = words[:3000] + words[-500:]
+        else:
+            sample_words = words
+        text_sample = " ".join(sample_words)
+
+        prompt = f"""You are creating a routing summary for a document retrieval system.
+A routing agent will read this summary to decide whether to search this document
+to answer a user's question — without seeing the document itself.
+
+Document filename: {filename}
+
+Your task: write a summary that maximizes routing accuracy for ANY kind of question
+a user might ask about this document. The summary must enable the routing agent to
+confidently answer: "Is the answer to this question likely to be in this document?"
+
+To do this, your summary MUST cover:
+1. What this document is fundamentally about (domain, subject, scope)
+2. The main topics, concepts, and themes covered
+3. The types of information present (e.g. definitions, statistics, procedures,
+   narratives, data tables, timelines, arguments, instructions)
+4. Any notable specifics that would appear in user questions (names, terms,
+   time periods, categories — whatever is significant for THIS document)
+5. What this document does NOT cover, so the router avoids false positives
+
+Keep the summary under 200 words. Be concrete and specific to this document.
+Do not use generic filler phrases. Every sentence should help distinguish
+whether a question belongs to this document or not.
+
+Document content:
+{text_sample}"""
+
+        try:
+            response = _client.models.generate_content(
+                model=_config.get("model_name"),
+                contents=prompt,
+                config={
+                    "max_output_tokens": 400,
+                    "temperature": 0.2
+                }
+            )
+            summary = response.text.strip() if hasattr(response, "text") else ""
+            print(f"[PDF SUMMARY] Generated summary for '{filename}' ({len(summary)} chars)")
+            return summary
+        except Exception as e:
+            print(f"[PDF SUMMARY] Failed to generate summary for '{filename}': {e}")
+            return ""
+
     def query(self, question: str, n_results: int = 5) -> dict:
         """Query the PDF collection."""
         results = self.collection.query(

@@ -7,6 +7,7 @@ from dependencies.auth import CurrentUser, AuthUser, verify_session_ownership
 from file_handler.sql import SQL
 from file_handler.pdf import PDFHandler
 from services.session_manager import session_manager
+from services.langgraph_agent import get_user_friendly_error
 
 router = APIRouter()
 os.makedirs("./sessions", exist_ok=True)
@@ -159,18 +160,30 @@ async def upload_pdf_internal(file: UploadFile, session_id: str, user: AuthUser)
         # Initialize PDF handler
         pdf_handler = PDFHandler(session_id)
         
-        # Process and store PDF
-        num_chunks = pdf_handler.add_pdf(pdf_file, file.filename)
+        # Process and store PDF — returns (num_chunks, extracted_text)
+        # so we can pass the text to generate_summary without re-reading the file.
+        num_chunks, extracted_text = pdf_handler.add_pdf(pdf_file, file.filename)
         
         print(f"[UPLOAD] PDF '{file.filename}' processed: {num_chunks} chunks stored")
+
+        # Generate routing summary from the already-extracted text.
+        # Done at upload time so there is zero cost per query.
+        summary = pdf_handler.generate_summary(extracted_text, file.filename)
+
+        # Merge into the session's pdf_summaries dict {filename: summary}
+        pdf_summaries = session.get("pdf_summaries") or {}
+        if not isinstance(pdf_summaries, dict):
+            pdf_summaries = {}
+        pdf_summaries[file.filename] = summary
         
         # Add to the PDF file list
         pdf_files.append(file.filename)
 
-        # Update session with chroma_path and uploaded PDF filenames
+        # Update session with chroma_path, PDF filenames, and summaries
         session_manager.update_session(session_id, {
             "chroma_path": pdf_handler.chroma_path,
-            "pdf_files": pdf_files
+            "pdf_files": pdf_files,
+            "pdf_summaries": pdf_summaries
         })
         
         return {
@@ -183,7 +196,7 @@ async def upload_pdf_internal(file: UploadFile, session_id: str, user: AuthUser)
     
     except Exception as e:
         print(f"[ERROR] PDF processing failed: {str(e)}")
-        raise HTTPException(500, f"PDF processing failed: {str(e)}")
+        raise HTTPException(500, get_user_friendly_error(str(e)))
 
 
 @router.post("/upload/pdf")

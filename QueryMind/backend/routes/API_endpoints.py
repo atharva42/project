@@ -61,27 +61,21 @@ async def get_schema(session_id: str, user: AuthUser = CurrentUser):
 
 @router.post("/chat")
 async def chat(chat_request: ChatRequest, user: AuthUser = CurrentUser):
-    """Handle chat requests from the frontend.
+    """Handle chat requests from the frontend."""
+    verify_session_ownership(chat_request.session_id, user)
 
-    The original implementation incorrectly used ``ConversationRequest`` which
-    expects ``first_query`` and ``messages`` fields, causing a 422 validation
-    error when the frontend sent only ``session_id`` and ``question``. We now
-    accept the lightweight ``ChatRequest`` model that matches the frontend
-    payload.
-    """
-    # Verify session ownership (returns the session dict so downstream
-    # router/pipelines can reuse it instead of re-reading from the DB).
-    session = verify_session_ownership(chat_request.session_id, user)
-    
-    # ``chat_graph`` is the ``run_agent`` function which returns the final answer dict.
-    print("I entered the chat endpoint with request")
-    result = chat_graph(chat_request.session_id, chat_request.question, session=session)
-    print("I exited successfully!")
+    result = chat_graph(chat_request.session_id, chat_request.question)
 
-    # The agent returns the final_answer dict directly - return it without extra nesting
-    # This ensures SQL results have sql_query, results, columns at top level
-    # RAG results have answer, context_chunks, sources at top level
-    # Combined results have answer, sql_result, rag_result at top level
+    # Inject execution_time_ms if the route didn't already set it.
+    # For combined routes, sum the individual pipeline times already recorded
+    # inside sql_result / rag_result — this excludes routing and LLM overhead
+    # and gives the actual data-fetching latency the user should see.
+    if isinstance(result, dict) and "execution_time_ms" not in result:
+        sql_ms = (result.get("sql_result") or {}).get("execution_time_ms", 0) or 0
+        rag_ms = (result.get("rag_result") or {}).get("execution_time_ms", 0) or 0
+        if sql_ms or rag_ms:
+            result["execution_time_ms"] = sql_ms + rag_ms
+
     return result
 
 # @router.post("/query", response_model=QueryResponse)

@@ -25,7 +25,6 @@ def validate_tables(
 ) -> tuple[bool, str]:
 
     # Reuse a pre-parsed statement if provided (avoids re-parsing the same SQL).
-    # Falls back to parsing here so the function still works if called standalone.
     if parsed is None:
         try:
             parsed = sqlglot.parse_one(sql, dialect="sqlite")
@@ -34,6 +33,13 @@ def validate_tables(
 
     allowed_tables = {table.lower() for table in schema_registry.keys()}
     cte_names = _get_cte_names(parsed)
+
+    # Build alias → real table name map for column validation
+    alias_to_table = {}
+    for table in parsed.find_all(exp.Table):
+        tname = table.name.lower()
+        alias = table.alias.lower() if table.alias else tname
+        alias_to_table[alias] = tname
 
     for table in parsed.find_all(exp.Table):
         table_name = table.name.lower()
@@ -46,6 +52,42 @@ def validate_tables(
 
         if table_name not in allowed_tables:
             return False, f"Table '{table_name}' does not exist in uploaded data."
+
+    # Validate column names against the schema.
+    # Only check when binding is unambiguous: qualified columns (table.col)
+    # or single-table queries. Multi-table unqualified columns are skipped
+    # (SQLite will catch them at execution time).
+    tables_in_query = [
+        t.name.lower() for t in parsed.find_all(exp.Table)
+        if t.name.lower() not in cte_names
+    ]
+
+    for col in parsed.find_all(exp.Column):
+        col_name = col.name.lower()
+        if col_name == "*":
+            continue
+
+        col_table = col.table.lower() if col.table else None
+
+        if col_table:
+            real_table = alias_to_table.get(col_table, col_table)
+            if real_table in cte_names:
+                continue
+        elif len(tables_in_query) == 1:
+            real_table = tables_in_query[0]
+        else:
+            continue  # ambiguous — skip
+
+        table_info = schema_registry.get(real_table) or schema_registry.get(real_table.lower())
+        if not table_info:
+            continue
+
+        allowed_cols = {c.lower() for c in (table_info.get("dtypes") or table_info.get("columns") or {}).keys()}
+        if allowed_cols and col_name not in allowed_cols:
+            return False, (
+                f"Column '{col.name}' does not exist in table '{real_table}'. "
+                f"Available columns: {', '.join(sorted(allowed_cols))}"
+            )
 
     return True, "OK"
 
@@ -82,13 +124,12 @@ def validate_sql(
     ok, msg, parsed = validate_sql_safety(sql)
     if timings_dict is not None:
         timings_dict["validation_safety_check"] = int((time.time() - safety_start) * 1000)
-    
+
     if not ok:
         return False, msg
 
     table_start = time.time()
-    # Reuse the statement already parsed during the safety check (avoids a
-    # second sqlglot parse of the same SQL).
+    # Reuse the statement already parsed during the safety check
     ok, msg = validate_tables(sql, schema_registry, parsed=parsed)
     if timings_dict is not None:
         timings_dict["validation_table_check"] = int((time.time() - table_start) * 1000)
@@ -104,8 +145,7 @@ def repair_sql(
     broken_sql: str,
     error_message: str,
     schema_registry: dict,
-    max_attempts: int = 2,
-    timings_dict: dict = None
+    max_attempts: int = 2
 ) -> tuple[str, bool]:
     """
     Attempt to repair broken SQL using Gemini.
@@ -137,7 +177,6 @@ def repair_sql(
     
     for attempt in range(max_attempts):
         try:
-            repair_llm_start = time.time()
             response = _client.models.generate_content(
                 model=_config.get("model_name"),
                 contents=repair_prompt,
@@ -146,22 +185,14 @@ def repair_sql(
                     "temperature": 0.2
                 }
             )
-            repair_llm_time = int((time.time() - repair_llm_start) * 1000)
             
             repaired = response.text.strip() if hasattr(response, 'text') else response.content[0].text.strip()
             
             # Validate the repaired query
-            repair_val_start = time.time()
             ok, msg = validate_sql(repaired, schema_registry)
-            repair_val_time = int((time.time() - repair_val_start) * 1000)
-            
-            # Store repair timings
-            if timings_dict is not None:
-                timings_dict[f"repair_attempt_{attempt+1}_llm"] = repair_llm_time
-                timings_dict[f"repair_attempt_{attempt+1}_validation"] = repair_val_time
             
             if ok:
-                print(f"[REPAIR] Attempt {attempt + 1}: Successfully repaired SQL (LLM: {repair_llm_time}ms, Validation: {repair_val_time}ms)")
+                print(f"[REPAIR] Attempt {attempt + 1}: Successfully repaired SQL")
                 return repaired, True
             else:
                 print(f"[REPAIR] Attempt {attempt + 1}: Repaired query still invalid: {msg}")
