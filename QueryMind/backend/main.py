@@ -1,11 +1,6 @@
 # from google import genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-# from load_keys import load_config
-# Import routers using absolute package paths to avoid circular import and
-# module‑not‑found errors when the application is started with
-# ``uvicorn backend.main:app``. The ``backend`` directory is a package, so we
-# reference sub‑modules with the full package name.
 from routes.uploadAPI_endpoints import router as upload_router
 from routes.API_endpoints import router as query_router
 from routes.auth_endpoints import router as auth_router

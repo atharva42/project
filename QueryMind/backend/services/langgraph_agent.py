@@ -1,5 +1,6 @@
 from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, END
+from langsmith import traceable
 # from langchain_core.messages import HumanMessage, AIMessage
 from google import genai
 from google.genai import types
@@ -729,6 +730,7 @@ def create_agent_graph():
 agent = create_agent_graph()
 
 
+@traceable(name="QueryMind Agent")
 def run_agent(session_id: str, question: str) -> dict:
     """Run the agent for a given question.
     
