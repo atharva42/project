@@ -7,7 +7,7 @@
 Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with dynamic routing, session persistence, and production-ready multi-modal query processing.
 
 ---
-## Observability
+## User Interface
 
 <p align="center">
   <img src="ss/Screenshot from 2026-06-18 21-21-40.png" width="900">
