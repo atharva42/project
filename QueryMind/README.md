@@ -1,6 +1,8 @@
 # QueryMind — Multi-Source Agentic AI Analytics Platform
 
-**🔗[Live Demo](https://querymind-frontend-sx50.onrender.com)**
+**🔗 [Live Demo](https://querymind-frontend-sx50.onrender.com)**
+
+> ⚠️ The public demo is currently unavailable due to free-tier hosting limitations. The project remains actively maintained, and the source code is fully available in this repository.
 
 Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with dynamic routing, session persistence, and production-ready multi-modal query processing.
 
