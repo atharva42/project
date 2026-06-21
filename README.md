@@ -4,7 +4,7 @@ AI Engineer focused on building production-oriented LLM applications, backend AI
 
 ## About
 
-### Currently working as an AI Engineer at Axtria Pvt. Ltd., building production-oriented enterprise AI systems for analytics and business intelligence workflows.
+Currently working as an AI Engineer at Axtria Pvt. Ltd., building production-oriented enterprise AI systems for analytics and business intelligence workflows.
 Presently working on enterprise AI systems involving:
 
 LLM-powered Text-to-SQL workflows
@@ -15,10 +15,10 @@ AI workflow orchestration and structured reasoning systems
 
 Interested in:
 - Generative AI Systems
+- Agentic AI Workflows
 - AI Infrastructure
 - Backend Engineering
 - Distributed Systems
-- Agentic AI Workflows
 
 ---
 
@@ -38,19 +38,20 @@ Interested in:
 - RAG
 - LangChain
 - LangGraph
+- LangSmith
 - OpenAI API
 - PyTorch
-- ChromaDB
+- Gemini API
 
 ### Backend & Infra
 - FastAPI
 - REST APIs
 - Docker
+- ChromaDB
 - SQLite
 - MySQL
 - Snowflake
 - Git
-- Postman
 
 ### Core CS
 - Data Structures & Algorithms
@@ -60,13 +61,12 @@ Interested in:
 - Socket Programming
 - System Design
 - Design Patterns
-- Distributed Systems
 
 ---
 
 # Featured Projects
 
-## AI Analytics Agent -- Multi-Source AI System
+## QueryMind — Multi-Source Agentic AI Analytics Platform
 
 Production-oriented AI analytics system combining:
 - Text-to-SQL generation
@@ -81,16 +81,14 @@ Production-oriented AI analytics system combining:
 - Guardrails for SQL safety and hallucination reduction
 - FastAPI backend with structured API responses
 - Vector retrieval using embeddings and ChromaDB
-- LangGraph-based agentic orchestration (in progress)
+- LangGraph-based agentic workflow orchestration
+- Dynamic routing between SQL, RAG, and hybrid workflows using LangGraph.
+- Query decomposition and result-aware reformulation for multi-step conditional reasoning.
+- Session-based data isolation
+- LangSmith tracing and observability
 
 ### Tech Stack
-Python, FastAPI, LangChain, LangGraph, OpenAI API, RAG, ChromaDB, SQLite
-
-### Current Focus
-- Improving retrieval quality
-- Agentic workflow orchestration
-- Evaluation pipelines using RAGAS/LangSmith
-- Production deployment and monitoring
+Python, FastAPI, LangChain, LangGraph, OpenAI API, RAG, ChromaDB, SQLite, SentenceTransformers
 
 ---
 
@@ -115,6 +113,6 @@ C++, Socket Programming, POSIX, SHA1
 - LinkedIn: [https://www.linkedin.com/in/atharva-pande-5367632b9/](https://www.linkedin.com/in/atharva-pande-5367632b9/)
 - GitHub: [https://github.com/atharva42](https://github.com/atharva42)
 - Email: atharvapande984@gmail.com
-- Leetcode: [https://leetcode.com/u/blueHoax](https://leetcode.com/u/blueHoax/)
+- LeetCode: [https://leetcode.com/u/blueHoax](https://leetcode.com/u/blueHoax/)
 
 Humans invented distributed systems just to spend decades debugging distributed systems. I participate in this tradition professionally now.
