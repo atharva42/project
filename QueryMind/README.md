@@ -168,8 +168,8 @@ This two-stage approach with **query decomposition** avoids the need for complex
 **1. Custom pipelines over LangChain abstractions**  
 Built SQL and RAG pipelines directly using source libraries (ChromaDB, Sentence Transformers, Gemini API) instead of LangChain wrappers. LangGraph used purely for agent orchestration (StateGraph, conditional routing). Result: full control over pipeline behavior, no black-box abstractions, easier debugging, faster execution without middleware overhead.
 
-**2. Dynamic routing and query decomposition**
-Router node uses Gemini with structured output validation (enum schema enforcement) to classify queries into 5 routes. Multi-source routes execute pipelines sequentially using query decomposition and reformulation. Intermediate results from the first pipeline are injected into the second query, enabling conditional reasoning across structured and unstructured data while reducing hallucinations.
+**2. Dynamic routing and query decomposition**<br>
+Router node uses Gemini with structured output validation (schema enforcement) to classify queries into 5 routes. Multi-source routes execute pipelines sequentially using query decomposition and reformulation. Intermediate results from the first pipeline are injected into the second query, enabling conditional reasoning across structured and unstructured data while reducing hallucinations.
 
 **3. Semantic table search with dual-level embeddings**  
 CSV tables get LLM-generated descriptions embedded in separate ChromaDB collection (`table_embeddings.py`). Query generation uses semantic search to find top-N relevant tables before generating SQL, reducing context size and improving accuracy for multi-table databases.
