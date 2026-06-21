@@ -168,8 +168,8 @@ This two-stage approach with **query decomposition** avoids the need for complex
 **1. Custom pipelines over LangChain abstractions**  
 Built SQL and RAG pipelines directly using source libraries (ChromaDB, Sentence Transformers, Gemini API) instead of LangChain wrappers. LangGraph used purely for agent orchestration (StateGraph, conditional routing). Result: full control over pipeline behavior, no black-box abstractions, easier debugging, faster execution without middleware overhead.
 
-**2. Dynamic routing with conditional query decomposition**  
-Router node uses Gemini with structured output validation (enum schema enforcement) to classify queries into 5 routes. Multi-source routes (`both_rag_first`/`both_sql_first`) use **query decomposition**: the router splits the original question into a CONDITION (the IF part) and an ACTION (the THEN part), annotating which source each belongs to. The CONDITION executes first; its result is injected into the original question and passed to a reformulator node, which rewrites it into a clean ACTION query for the second pipeline. This two-stage execution with context injection enables complex conditional logic (e.g., "If sales > 60k, return stakeholder names from PDFs") without multi-hop reasoning—the LLM sees the condition result as deterministic context.
+**2. Dynamic routing and query decomposition**
+Router node uses Gemini with structured output validation (enum schema enforcement) to classify queries into 5 routes. Multi-source routes execute pipelines sequentially using query decomposition and reformulation. Intermediate results from the first pipeline are injected into the second query, enabling conditional reasoning across structured and unstructured data while reducing hallucinations.
 
 **3. Semantic table search with dual-level embeddings**  
 CSV tables get LLM-generated descriptions embedded in separate ChromaDB collection (`table_embeddings.py`). Query generation uses semantic search to find top-N relevant tables before generating SQL, reducing context size and improving accuracy for multi-table databases.
