@@ -395,7 +395,58 @@ function MainContent() {
                           .trimStart()}
                       </pre>
                       {msg.sql_result.results && msg.sql_result.results.length > 0 && (
-                        <p className="mt-1 text-gray-600">{msg.sql_result.results.length} rows found</p>
+                        <>
+                          <p className="mt-2 text-gray-600 font-medium">{msg.sql_result.results.length} rows found</p>
+                          
+                          {/* SQL Results Table */}
+                          <div className="mt-2 overflow-x-auto">
+                            <table className="min-w-full text-xs">
+                              <thead>
+                                <tr className="bg-gray-100">
+                                  {msg.sql_result.tables_used?.map((col, i) => (
+                                    <th key={i} className="px-2 py-1 text-left font-medium text-gray-600">
+                                      {col}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(expandedResults[msgIndex] ? msg.sql_result.results : msg.sql_result.results.slice(0, 7)).map((row, i) => (
+                                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                                    {row.map((cell, j) => (
+                                      <td key={j} className="px-2 py-1 text-gray-700">
+                                        {cell !== null && cell !== undefined ? String(cell) : (
+                                          <span className="text-gray-400 italic">null</span>
+                                        )}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            
+                            {/* Show More button for SQL results in combined */}
+                            {msg.sql_result.results.length > 7 && (
+                              <div className="flex items-center justify-center mt-2">
+                                <button 
+                                  onClick={() => {
+                                    setExpandedResults(prev => ({
+                                      ...prev,
+                                      [msgIndex]: !prev[msgIndex]
+                                    }));
+                                  }}
+                                  className="px-3 py-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition-colors"
+                                >
+                                  {expandedResults[msgIndex] ? (
+                                    <span>Show less</span>
+                                  ) : (
+                                    <span>Show more ({msg.sql_result.results.length - 7} more rows)</span>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </>
                       )}
                     </div>
                   </details>
@@ -589,7 +640,7 @@ function MainContent() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(expandedResults[msgIndex] ? msg.results : msg.results.slice(0, 10)).map((row, i) => (
+                      {(expandedResults[msgIndex] ? msg.results : msg.results.slice(0, 7)).map((row, i) => (
                         <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
                           {row.map((cell, j) => (
                             <td key={j} className="px-3 py-2 text-gray-700">
@@ -602,7 +653,7 @@ function MainContent() {
                       ))}
                     </tbody>
                   </table>
-                  {msg.results.length > 10 && (
+                  {msg.results.length > 7 && (
                     <div className="flex items-center justify-center mt-3">
                       <button 
                         onClick={() => {
@@ -625,7 +676,7 @@ function MainContent() {
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                             </svg>
-                            <span>Show all {msg.results.length} rows</span>
+                            <span>Show more ({msg.results.length - 7} more rows)</span>
                           </>
                         )}
                       </button>
