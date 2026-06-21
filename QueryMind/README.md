@@ -7,6 +7,13 @@
 Natural language to SQL and RAG over uploaded data. Unified LangGraph agent with dynamic routing, session persistence, and production-ready multi-modal query processing.
 
 ---
+## Observability
+
+<p align="center">
+  <img src="ss/Screenshot from 2026-06-18 21-21-40.png" width="900">
+  <br>
+  <em>Main chat interface</em>
+</p>
 
 ## What It Does
 
@@ -133,9 +140,11 @@ This two-stage approach with **query decomposition** avoids the need for complex
 
 **Agent & Orchestration**
 - LangGraph — StateGraph with typed state and conditional edges for stateful agent workflow
+- LangSmith — optional observability and tracing (auto-instruments all LangGraph nodes)
 
 **LLM**
-- Google Gemini 2.5 Flash (direct API via `google-genai` SDK, no LangChain wrapper)
+- Google Gemini Flash (direct API via `google-genai` SDK, no LangChain wrapper)
+- Supports both `gemini-2.5-flash` and `gemini-flash-lite-latest` (currently using lite due to 2.5 Flash hard API limits on free tier)
 
 **Backend**
 - FastAPI, Python 3.x, Pydantic validation, Uvicorn ASGI server
@@ -173,58 +182,23 @@ Generated SQL passes through 3-stage validation: safety check (SELECT-only), sch
 
 ---
 
-## Project Structure
+## Repository Structure
 
 ```
 QueryMind/
-├── backend/
-│   ├── dependencies/        # Auth middleware (session verification)
-│   │   └── auth.py
-│   ├── file_handler/        # CSV→SQLite, PDF→ChromaDB processors
-│   │   ├── pdf.py
-│   │   └── sql.py
-│   ├── models/              # Pydantic schemas
-│   │   └── pydantic_schema.py
-│   ├── routes/              # FastAPI endpoints
-│   │   ├── auth_endpoints.py
-│   │   ├── API_endpoints.py      # /chat endpoint
-│   │   ├── uploadAPI_endpoints.py
-│   │   └── graph.py
-│   ├── services/            # Core business logic
-│   │   ├── embedding_service.py      # Gemini embedding wrapper
-│   │   ├── health_service.py
-│   │   ├── langgraph_agent.py        # Agent state machine + router/reformulator/combine
-│   │   ├── pipeline.py               # SQL + RAG pipeline orchestration
-│   │   ├── rag_service.py
-│   │   ├── session_manager.py        # User + session persistence
-│   │   ├── sql_service.py
-│   │   ├── table_embeddings.py       # Semantic table search
-│   │   ├── langchain_tools.py
-│   │   └── tools/
-│   ├── validations/         # SQL validation and repair
-│   ├── main.py              # FastAPI app entry point
-│   ├── load_keys.py         # Environment config loader
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/      # UploadForm, Chat, Message components
-│   │   ├── context/         # AuthContext, session state
-│   │   ├── pages/           # Login, Register pages
-│   │   ├── App.jsx          # Main chat interface + combined route rendering
-│   │   ├── config.js        # API base URL
-│   │   ├── index.css
-│   │   └── main.jsx         # React entry point
-│   ├── package.json
-│   └── vite.config.js
-└── Root config files
-    ├── .env                 # Google API key (gitignored)
-    ├── .env.development
-    ├── .gitignore
-    └── README.md
+├── backend/                 # FastAPI server with LangGraph agent
+│   ├── services/           # Core AI pipelines (SQL, RAG, routing logic)
+│   ├── routes/             # REST API endpoints
+│   ├── file_handler/       # CSV & PDF processing
+│   ├── dependencies/       # Auth middleware
+│   └── validations/        # SQL safety & repair
+├── frontend/               # React chat interface
+│   └── src/
+│       ├── components/     # Reusable UI components
+│       ├── context/        # Auth & session state
+│       └── pages/          # Login, register screens
+└── README.md
 ```
-
-**Note**: Runtime directories (`sessions/`, `__pycache__/`, `venv/`) and runtime files (`.env`, logs, query_log.json) are excluded from this structure as they are gitignored or auto-generated.
 
 ---
 
@@ -233,8 +207,13 @@ QueryMind/
 **Environment Variables** (create `.env` in `backend/`):
 ```bash
 GOOGLE_API_KEY=your_gemini_api_key
-MODEL_NAME=gemini-2.5-flash
+MODEL_NAME=gemini-flash-lite-latest
 ENVIRONMENT=development  # or production
+
+# LangSmith Tracing (optional)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=your_langsmith_api_key
+LANGCHAIN_PROJECT=QueryMind
 ```
 
 **Backend**:
