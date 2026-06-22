@@ -1,4 +1,7 @@
 # from google import genai
+from dotenv import load_dotenv
+load_dotenv()  # Load env (incl. LANGCHAIN_TRACING_V2) before any instrumented imports
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes.uploadAPI_endpoints import router as upload_router

@@ -1,4 +1,5 @@
 from typing import TypedDict, Literal
+import json
 from langgraph.graph import StateGraph, END
 from langsmith import traceable
 # from langchain_core.messages import HumanMessage, AIMessage
@@ -56,8 +57,11 @@ class AgentState(TypedDict):
     question: str
     reformulated_question: str | None
     route: Literal["sql", "rag", "both_rag_first", "both_sql_first", "both_parallel", "none"]
-    condition_query: str | None   # Step-1 sub-question (the condition to evaluate)
-    action_query: str | None      # Step-2 action (what to do based on the condition)
+    condition_query: str | None      # Step-1 sub-question (gets the data to test)
+    condition_predicate: str | None  # The test applied to step-1 data (true/false statement)
+    then_action: str | None          # Step-2 command if condition is TRUE
+    else_action: str | None          # Step-2 command if condition is FALSE (None if unspecified)
+    condition_met: bool | None       # Resolved condition outcome
     sql_result: dict | None
     rag_result: dict | None
     final_answer: dict | None
@@ -94,18 +98,81 @@ def _clean_sql_payload(sql_result: dict) -> str:
     return "\n".join(lines)
 
 
+def _evaluate_condition(predicate: str, context_data: str, context_source: str) -> bool:
+    """Evaluate whether a condition holds, given the step-1 evidence.
+
+    A narrow, deterministic LLM call with structured (enum) output — it answers
+    ONE thing: does the predicate hold against the evidence? The agent's control
+    flow uses this boolean to pick a branch; the decision logic lives in code.
+    """
+    prompt = f"""Evidence gathered from {context_source}:
+"{context_data}"
+
+Based ONLY on the evidence above, does the following statement hold true?
+Statement: "{predicate}"
+
+Answer with exactly TRUE or FALSE."""
+    try:
+        response = _client.models.generate_content(
+            model=_config.get("model_name", "gemini-flash-lite-latest"),
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type="text/x.enum",
+                response_schema=types.Schema(
+                    type=types.Type.STRING,
+                    enum=["TRUE", "FALSE"]
+                )
+            )
+        )
+        return response.text.strip().upper() == "TRUE"
+    except Exception as e:
+        print(f"[CONDITION EVAL] Failed: {e} — assuming TRUE to attempt the action")
+        return True
+
+
+def _build_conclusion(question: str, condition_met: bool, context_data: str) -> str:
+    """Generate a short, factual answer when no branch action applies.
+
+    Used only after the agent has STRUCTURALLY decided to conclude (the chosen
+    branch has no action). The LLM only handles wording, not the decision.
+    """
+    prompt = f"""The user asked: "{question}"
+
+We evaluated the condition and it was {'TRUE' if condition_met else 'FALSE'}.
+Evidence: "{context_data}"
+
+The question specifies no action to take for this outcome. Write a short, direct answer
+that states the condition result and explains that the requested action does not apply.
+Use only the evidence above. Do not invent data."""
+    try:
+        response = _client.models.generate_content(
+            model=_config.get("model_name", "gemini-flash-lite-latest"),
+            contents=prompt,
+            config={"temperature": 0.2, "max_output_tokens": 300}
+        )
+        return response.text.strip()
+    except Exception:
+        return ("The condition in your question was not met, and no alternative action "
+                "was specified, so there is nothing further to return.")
+
+
 def reformulator_node(state: AgentState) -> AgentState:
+    """Resolve the conditional branch after step 1.
+
+    All decisions here are structural, driven by the decomposed branches — not
+    by prompt examples:
+      1. Evaluate the condition to a boolean against step-1 evidence.
+      2. Select the branch action: then_action if TRUE, else_action if FALSE.
+      3. If the selected branch has NO action -> conclude directly (skip engine 2).
+         Otherwise -> hand the action to the second engine.
+    """
     question = state["question"]
-    # The action_query (decomposed by the router) is the step-2 task. Fall back
-    # to the full question if decomposition wasn't available.
-    action_query = state.get("action_query") or question
+    route = state["route"]
     sql_result = state.get("sql_result")
     rag_result = state.get("rag_result")
-    route = state["route"]
-    
-    # Extract clean, noise-free payload for the LLM context.
-    # RAG answer is already a plain string; SQL result needs stripping of
-    # timing/metadata fields that pollute the prompt and confuse the LLM.
+
+    # Extract clean, noise-free evidence from step 1 for the condition check.
     if route == "both_rag_first":
         context_data = rag_result.get("answer", "") if isinstance(rag_result, dict) else str(rag_result)
         context_source = "Document Search Insights (RAG)"
@@ -113,55 +180,67 @@ def reformulator_node(state: AgentState) -> AgentState:
         context_data = _clean_sql_payload(sql_result)
         context_source = "Database Computation Results (SQL)"
 
-    universal_prompt = f"""You are a query reformulation assistant in a two-step pipeline.
+    predicate = state.get("condition_predicate") or question
+    then_action = state.get("then_action")
+    else_action = state.get("else_action")
 
-The user's original question was: "{question}"
+    # 1. Evaluate the condition -> boolean.
+    condition_met = _evaluate_condition(predicate, context_data, context_source)
+    state["condition_met"] = condition_met
 
-STEP 1 has completed. We evaluated the condition using {context_source} and got:
-"{context_data}"
+    # 2. Pick the branch — pure structural logic, no prompt-specific examples.
+    selected_action = then_action if condition_met else else_action
+    print(f"[REFORMULATOR] Condition '{predicate}' -> {condition_met}; "
+          f"selected action: {selected_action!r}")
 
-The remaining STEP 2 action to perform is: "{action_query}"
+    # 3. No action defined for this outcome -> conclude. The decision to stop is
+    #    the agent's, based on the branch structure (a missing branch), not on
+    #    any wording baked into a prompt.
+    if not selected_action:
+        state["final_answer"] = {
+            "answer": _build_conclusion(question, condition_met, context_data),
+            "sql_result": sql_result,
+            "rag_result": rag_result,
+            "type": "combined",
+        }
+        state["reformulated_question"] = None
+        print("[REFORMULATOR] No action for this branch -> concluding directly.")
+        return state
 
-TASK:
-1. Use the step-1 result to resolve the IF/THEN/ELSE condition (decide which branch applies).
-2. Rewrite the STEP 2 action into a single, clean, direct COMMAND for the next execution engine.
-3. Remove all conditional syntax, numbers, or logic blocks. The next engine should only see the final command it needs to execute.
-
-IMPORTANT: Your output must be a REWRITTEN QUERY/COMMAND for the next engine — NOT an answer to the
-user's question. Do not answer the question yourself. Only produce the instruction the next engine
-should run.
-
-CRITICAL EXAMPLES:
-- SQL-first: "If sales are above 60k, return stakeholder names, else return manager names."
-  Database Result: "total_sales\\n72000" (Condition met!)
-  Output: "Return the names of all stakeholders."
-
-- SQL-first: "If sales are above 60k, return stakeholder names, else return manager names."
-  Database Result: "total_sales\\n45000" (Condition failed!)
-  Output: "Extract the names of all managers."
-
-- RAG-first: "Read the sales report; if sales were strong, give me the profit figures, else give me the loss figures."
-  Document Insight: "The report states Q4 sales grew 20% and exceeded targets." (Condition met!)
-  Output: "Return the profit figures."
-
-- RAG-first: "Read the sales report; if sales were strong, give me the profit figures, else give me the loss figures."
-  Document Insight: "The report states Q4 sales declined and missed targets." (Condition failed!)
-  Output: "Return the loss figures."
-
-Respond with ONLY the final rewritten command:"""
-
-    try:
-        response = _client.models.generate_content(
-            model=_config.get("model_name", "gemini-flash-lite-latest"),
-            contents=universal_prompt,
-            config={"temperature": 0.0}
-        )
-        state["reformulated_question"] = response.text.strip()
-    except Exception:
-        state["reformulated_question"] = question
-        
+    # 4. Action exists -> it becomes the command for the second engine.
+    state["reformulated_question"] = selected_action
     return state
 
+
+def _retrieval_evidence(session_id: str, question: str, n: int = 3) -> str:
+    """Probe the PDF vector store with the question to ground routing in real content.
+
+    Returns the top semantically-matching PDF passages (with similarity distance)
+    so the router can SEE whether the answer to this specific question actually
+    lives in the documents — rather than guessing from a static summary or from
+    attribute keywords. Lower distance = closer match. On any failure it returns
+    a neutral note so routing never breaks.
+    """
+    try:
+        from file_handler.pdf import PDFHandler
+        handler = PDFHandler(session_id)
+        res = handler.query(question, n_results=n)
+        docs = res.get("documents", []) or []
+        dists = res.get("distances", []) or []
+        if not docs:
+            return "PDF semantic search returned no matching passages for this question."
+
+        lines = []
+        for i, doc in enumerate(docs):
+            snippet = " ".join(str(doc).split())[:300]
+            dist = dists[i] if i < len(dists) else None
+            score = f"(distance {dist:.3f}) " if isinstance(dist, (int, float)) else ""
+            lines.append(f"  [{i + 1}] {score}{snippet}")
+        return ("Most relevant PDF passages (lower distance = stronger match):\n"
+                + "\n".join(lines))
+    except Exception as e:
+        print(f"[ROUTER] PDF retrieval probe failed: {e}")
+        return "PDF semantic search unavailable for this question."
 
 
 def router_node(state: AgentState) -> AgentState:
@@ -229,6 +308,18 @@ def router_node(state: AgentState) -> AgentState:
             summary = pdf_summaries.get(filename, "No summary available.")
             context_lines.append(f"  • {filename}: {summary}")
 
+    # ── Retrieval grounding ──────────────────────────────────────────────────
+    # A static summary can't tell the router whether a SPECIFIC entity asked
+    # about (e.g. a particular person) actually lives in the PDF or the CSV.
+    # So we probe the PDF vector store with the real question and show the router
+    # the top matching passages. Now the routing decision is grounded in actual
+    # content the model can read and reason over — not a guess from keywords.
+    if pdf_files:
+        evidence = _retrieval_evidence(session_id, question)
+        context_lines.append("")
+        context_lines.append("RETRIEVAL EVIDENCE — live PDF semantic search for THIS exact question:")
+        context_lines.append(evidence)
+
     context_block = "\n".join(context_lines) if context_lines else "No data sources available."
 
     routing_prompt = f"""You are a routing agent for a hybrid data system with two data sources: a CSV database (structured tables) and PDF documents (unstructured text).
@@ -239,15 +330,26 @@ WHAT EACH SOURCE ACTUALLY CONTAINS (use this to map each part of the question to
 ────────────────────────────────────────
 HOW TO DECIDE THE ROUTE — follow these steps in order:
 
-STEP 1 — Identify if the question is conditional or independent:
-  • CONDITIONAL: has an "if/then/else", "when", "depending on", or compares a value to decide what to retrieve.
-    In a conditional question one part (the CONDITION) must be resolved before the other part (the ANSWER) is known.
-  • PARALLEL (independent): asks for information from BOTH sources with no dependency between them.
-    Both sources can be queried at the same time — neither result depends on the other.
+STEP 1 — Can ONE source answer the ENTIRE question by itself?
+  Use the RETRIEVAL EVIDENCE and source contents above to see which source actually holds what the
+  question asks for.
+  • Everything needed is in the CSV tables only  → SQL
+  • Everything needed is in the PDF documents only → RAG
+  A plain retrieval like "give me the <attribute> of <entity>" is SINGLE-source whenever one source
+  contains both the entity and that attribute. Only move past this step if the question genuinely
+  cannot be answered without BOTH sources.
 
-STEP 2 — For conditional questions, map CONDITION and ANSWER to their sources:
+STEP 2 — The question truly needs BOTH sources. Decide if there is a dependency:
+  • CONDITIONAL: the question contains an explicit conditional construct ("if/then/else", "when",
+    "depending on", "only if", "in case"), OR one part's result must be known before you can tell
+    what to retrieve for the other part. The CONDITION must be resolved before the ANSWER is known.
+  • PARALLEL (independent): both parts are separate retrievals; neither result depends on the other.
+    Both sources can be queried at the same time.
+
+STEP 3 — For conditional questions, map CONDITION and ANSWER to their sources:
   • CSV  → counts, sums, averages, numeric comparisons, filtering on columns, anything that is a table column.
   • PDF  → what a document says, narrative facts, names/text/policies/descriptions found in the documents.
+
 
 STEP 3 — Pick the route:
   CONDITIONAL (one result depends on the other):
@@ -264,39 +366,36 @@ STEP 3 — Pick the route:
   • Casual chatter / off-topic / unrelated → NONE
 
 ────────────────────────────────────────
-EXAMPLES:
+EXAMPLES (abstract patterns — focus on the structure, not the words):
 
-1. "If Chinese employee count > 3000, get the company's email from the document, else its description."
-   → Conditional: condition=CSV, answer=PDF → BOTH_SQL_FIRST
+A. "<single attribute> of <entity>"  (one source has both the entity and the attribute)
+   → SINGLE source → SQL or RAG (whichever source holds it)
 
-2. "If total sales are above $60k, return the onboarding guidelines from the report."
-   → Conditional: condition=CSV, answer=PDF → BOTH_SQL_FIRST
+B. "<fact A from one source> and <fact B from the other source>"  (two independent asks)
+   → no dependency → BOTH_PARALLEL
 
-3. "Read the sales report; if sales were strong, give me the profit figures from the table, else loss."
-   → Conditional: condition=PDF, answer=CSV → BOTH_RAG_FIRST
+C. "if <numeric/column test on CSV> then <retrieve narrative from PDF> [else <other PDF info>]"
+   → condition in CSV, answer in PDF → BOTH_SQL_FIRST
 
-4. "If Atharva is listed in the resume, count how many users are from China."
-   → Conditional: condition=PDF, answer=CSV → BOTH_RAG_FIRST
+D. "based on what the document says about <X>, return <CSV metric/rows>"
+   → condition in PDF, answer in CSV → BOTH_RAG_FIRST
 
-5. "If employee count > 1000 show the company name, else show the country."
-   → Conditional: condition=CSV, answer=CSV → SQL  (NOT a BOTH route)
+E. "if <CSV test> then <CSV value> else <other CSV value>"
+   → condition and answer BOTH in CSV → SQL  (single source, even though it says "if")
 
-6. "If the report mentions a Q4 risk, summarize that risk section."
-   → Conditional: condition=PDF, answer=PDF → RAG  (NOT a BOTH route)
+F. "if the document mentions <X>, summarize <that document section>"
+   → condition and answer BOTH in PDF → RAG  (single source, even though it says "if")
 
-7. "How many companies were founded after 2010, and what does the report say about hiring strategy?"
-   → Parallel: CSV (count) + PDF (hiring strategy) — no dependency → BOTH_PARALLEL
+G. "what does the document say about <X>?"        → RAG
+H. "<count/sum/average/filter over CSV columns>"   → SQL
 
-8. "Give me the average salary from the database and also summarize the onboarding document."
-   → Parallel: CSV (salary) + PDF (summary) — no dependency → BOTH_PARALLEL
-
-9. "What does the report say about Q4 revenue?"  → RAG
-10. "How many companies were founded after 2010?" → SQL
 
 ────────────────────────────────────────
 CRITICAL RULES:
-- Use BOTH_SQL_FIRST / BOTH_RAG_FIRST ONLY when the CONDITION and ANSWER come from DIFFERENT sources.
-- Use BOTH_PARALLEL when both sources contribute independently (no if/then dependency).
+- ALWAYS try STEP 1 first: if one source can answer the whole question, use that single source (SQL or RAG). Prefer a single source over any BOTH route.
+- A simple "give me the X of Y" is single-source retrieval, NOT a cross-source dependency. Finding an entity and returning one of its attributes is one lookup, not a condition.
+- Use BOTH_SQL_FIRST / BOTH_RAG_FIRST ONLY when there is a genuine conditional dependency AND the CONDITION and ANSWER come from DIFFERENT sources.
+- Use BOTH_PARALLEL when both sources contribute independent pieces (no if/then dependency).
 - If both parts resolve from the SAME source, use that single source (SQL or RAG).
 - The condition may appear BEFORE or AFTER the answer — identify which clause is the test.
 
@@ -333,23 +432,33 @@ Respond with exactly one of these words: SQL, RAG, BOTH_RAG_FIRST, BOTH_SQL_FIRS
         state["route"] = route_decision
         state["reformulated_question"] = None
         state["condition_query"] = None
-        state["action_query"] = None
+        state["condition_predicate"] = None
+        state["then_action"] = None
+        state["else_action"] = None
+        state["condition_met"] = None
         state["sql_result"] = None
         state["rag_result"] = None
         state["error"] = None
 
-        # For conditional cross-source routes, decompose the question into:
-        #   - condition_query: the sub-question the FIRST engine must answer
-        #   - action_query:    what to do based on that result (FIRST engine's
-        #                      source is given in the route; the action targets
-        #                      the OTHER source)
+        # For conditional cross-source routes, decompose the question into a
+        # structured branch plan:
+        #   - condition_query:     sub-question the FIRST engine answers (gets data)
+        #   - condition_predicate: the test applied to that data (true/false)
+        #   - then_action:         what the SECOND engine should do if TRUE
+        #   - else_action:         what the SECOND engine should do if FALSE (or None)
         # Decomposition happens HERE because the router already has the full
-        # data-source context loaded, so it knows which part belongs where.
+        # data-source context loaded. The agent's control flow (not a prompt)
+        # later decides whether to run the second engine or conclude, based on
+        # whether the selected branch has an action.
         if route_decision in ("both_sql_first", "both_rag_first"):
-            cond, action = _decompose_conditional(question, route_decision, context_block)
-            state["condition_query"] = cond
-            state["action_query"] = action
-            print(f"[ROUTER] Decomposed → condition: '{cond}' | action: '{action}'")
+            decomp = _decompose_conditional(question, route_decision, context_block)
+            state["condition_query"] = decomp["condition_query"]
+            state["condition_predicate"] = decomp["condition_predicate"]
+            state["then_action"] = decomp["then_action"]
+            state["else_action"] = decomp["else_action"]
+            print(f"[ROUTER] Decomposed -> condition_query: '{decomp['condition_query']}' | "
+                  f"predicate: '{decomp['condition_predicate']}' | "
+                  f"then: '{decomp['then_action']}' | else: '{decomp['else_action']}'")
 
         return state
 
@@ -361,61 +470,93 @@ Respond with exactly one of these words: SQL, RAG, BOTH_RAG_FIRST, BOTH_SQL_FIRS
         return state
 
 
-def _decompose_conditional(question: str, route: str, context_block: str) -> tuple[str, str]:
-    """Split a conditional cross-source question into two sub-tasks.
+def _decompose_conditional(question: str, route: str, context_block: str) -> dict:
+    """Decompose a conditional cross-source question into a structured branch plan.
 
-    Returns (condition_query, action_query):
-      - condition_query: a clean, single-purpose question for the FIRST engine
-        to evaluate the condition (no IF/THEN, no references to the other source)
-      - action_query: a description of what to retrieve/do once the condition is
-        known, to be resolved by the reformulator after step 1 runs.
+    Returns a dict with:
+      - condition_query:     clean, standalone question for the FIRST engine to
+                             retrieve the data needed to test the condition.
+      - condition_predicate: the test applied to that data, phrased as a
+                             true/false statement (e.g. "the count is above 1000").
+      - then_action:         standalone command for the SECOND engine if the
+                             condition is TRUE.
+      - else_action:         standalone command for the SECOND engine if the
+                             condition is FALSE — None when the question gives no
+                             alternative for the false case.
 
-    For both_sql_first: condition is evaluated in the CSV database; action targets the PDF.
-    For both_rag_first: condition is evaluated in the PDF; action targets the CSV database.
+    The LLM only produces this structured breakdown. Whether the second engine
+    runs at all is decided later by the agent's control flow (in the
+    reformulator) based on which branch is selected — not by any prompt wording.
+
+    For both_sql_first: condition is tested in the CSV database; action targets the PDF.
+    For both_rag_first: condition is tested in the PDF; action targets the CSV database.
     """
     if route == "both_sql_first":
         first_source, second_source = "CSV database", "PDF documents"
     else:
         first_source, second_source = "PDF documents", "CSV database"
 
-    prompt = f"""You are decomposing a conditional question into two steps for a two-stage data pipeline.
+    prompt = f"""Decompose a conditional question into a structured plan for a two-stage pipeline.
 
 Available data sources:
 {context_block}
 
 User question: "{question}"
 
-This is a conditional question. Step 1 evaluates a condition using the {first_source}.
-Step 2 performs an action using the {second_source}, based on the step-1 result.
+Step 1 tests a condition using the {first_source}.
+Step 2 performs an action using the {second_source}, depending on the condition outcome.
 
-Break the question into exactly two parts:
-1. CONDITION: a clean, standalone question for the {first_source} that retrieves ONLY the
-   data needed to evaluate the condition. No IF/THEN wording. No references to the other source.
-2. ACTION: a short description of what to retrieve from the {second_source} once the condition
-   result is known (keep any if/else branches so the next step can pick the right branch).
+Produce these fields:
+- condition_query: a clean, standalone question for the {first_source} that retrieves ONLY
+  the data needed to test the condition. No if/then wording, no reference to the other source.
+- condition_predicate: the test applied to that data, written as a statement that is either
+  true or false (e.g. "the count is greater than 1000", "the report mentions strong growth").
+- then_action: a standalone command for the {second_source} to run if the condition is TRUE.
+- else_action: a standalone command for the {second_source} to run if the condition is FALSE.
+  Leave this empty if the question specifies no alternative for the false case."""
 
-Respond in EXACTLY this format (two lines):
-CONDITION: <the condition question>
-ACTION: <the action description>"""
+    schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "condition_query": types.Schema(type=types.Type.STRING),
+            "condition_predicate": types.Schema(type=types.Type.STRING),
+            "then_action": types.Schema(type=types.Type.STRING),
+            "else_action": types.Schema(type=types.Type.STRING),
+        },
+        required=["condition_query", "condition_predicate", "then_action"],
+    )
+
+    fallback = {
+        "condition_query": question,
+        "condition_predicate": question,
+        "then_action": question,
+        "else_action": None,
+    }
 
     try:
         response = _client.models.generate_content(
             model=_config.get("model_name"),
             contents=prompt,
-            config={"max_output_tokens": 200, "temperature": 0.0}
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=400,
+                response_mime_type="application/json",
+                response_schema=schema,
+            ),
         )
-        text = response.text.strip() if hasattr(response, "text") else ""
-        condition_query, action_query = question, question
-        for line in text.splitlines():
-            s = line.strip()
-            if s.upper().startswith("CONDITION:"):
-                condition_query = s.split(":", 1)[1].strip()
-            elif s.upper().startswith("ACTION:"):
-                action_query = s.split(":", 1)[1].strip()
-        return condition_query, action_query
+        data = json.loads(response.text)
+        # Normalize an empty/blank else_action to None so the agent treats it as
+        # "no branch" rather than an empty command.
+        else_action = (data.get("else_action") or "").strip() or None
+        return {
+            "condition_query": data.get("condition_query") or question,
+            "condition_predicate": data.get("condition_predicate") or question,
+            "then_action": (data.get("then_action") or "").strip() or None,
+            "else_action": else_action,
+        }
     except Exception as e:
         print(f"[DECOMPOSE] Failed: {e} — falling back to original question")
-        return question, question
+        return fallback
 
 
 def parallel_node(state: AgentState) -> AgentState:
@@ -710,13 +851,19 @@ def create_agent_graph():
         }
     )
 
-    # Reformulator → the opposite engine
+    # Reformulator → the opposite engine, UNLESS the condition resolved with no
+    # meaningful follow-up (final_answer already set) → go straight to finalize.
     workflow.add_conditional_edges(
         "reformulator",
-        lambda state: "sql" if state["route"] == "both_rag_first" else "rag",
+        lambda state: (
+            "finalize" if state.get("final_answer") is not None
+            else "sql" if state["route"] == "both_rag_first"
+            else "rag"
+        ),
         {
             "sql": "sql",
-            "rag": "rag"
+            "rag": "rag",
+            "finalize": "finalize"
         }
     )
 
@@ -747,7 +894,10 @@ def run_agent(session_id: str, question: str) -> dict:
         "route": "none",
         "reformulated_question": None,
         "condition_query": None,
-        "action_query": None,
+        "condition_predicate": None,
+        "then_action": None,
+        "else_action": None,
+        "condition_met": None,
         "sql_result": None,
         "rag_result": None,
         "final_answer": None,
