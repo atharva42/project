@@ -2,9 +2,7 @@
 
 A full-stack AI agent platform built solo to solve a core problem in multi-hop RAG: **resolving complex user queries that require querying both structured data (CSV/SQLite) and unstructured files (PDFs/ChromaDB) in a guaranteed execution sequence without model hallucinations.**
 
-[🔗Live Demo](https://querymind-frontend-sx50.onrender.com)
-
-> Demo runs on free-tier infrastructure (rate-limited embeddings, throttled CPU/RAM). If it times out, that's the hosting tier — see [Known Limitations](#known-limitations--why-the-demo-might-misbehave).
+> ⚠️ Live demo is currently unavailable due to free-tier hosting limitations & will be live again soon. The project however is actively  maintained. 
 
 <p align="center">
   <img src="ss/Screenshot from 2026-06-18 21-21-40.png" width="49%">
