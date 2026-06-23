@@ -7,11 +7,8 @@ A full-stack AI agent platform built solo to solve a core problem in multi-hop R
 > Demo runs on free-tier infrastructure (rate-limited embeddings, throttled CPU/RAM). If it times out, that's the hosting tier — see [Known Limitations](#known-limitations--why-the-demo-might-misbehave).
 
 <p align="center">
-  <img src="ss/Screenshot from 2026-06-18 21-21-40.png" width="850">
-</p>
-
-<p align="center">
-  <img src="ss/Screenshot from 2026-06-21 13-16-29.png" width="850">
+  <img src="ss/Screenshot from 2026-06-18 21-21-40.png" width="49%">
+  <img src="ss/Screenshot from 2026-06-21 13-16-29.png" width="49%">
 </p>
 
 ---
