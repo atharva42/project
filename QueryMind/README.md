@@ -10,6 +10,10 @@ A full-stack AI agent platform built solo to solve a core problem in multi-hop R
   <img src="ss/Screenshot from 2026-06-18 21-21-40.png" width="850">
 </p>
 
+<p align="center">
+  <img src="ss/Screenshot from 2026-06-21 13-16-29.png" width="850">
+</p>
+
 ---
 
 ## Why I Built This
