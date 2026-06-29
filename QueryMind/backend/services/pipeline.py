@@ -55,6 +55,8 @@ def run_sql_pipeline(
 
         # 2. Validate with schema registry
         is_valid, error_msg = validate_sql(sql_query, schema_registry)
+        should_repair = False  # initialise so log entry can always reference it
+        repair_triggered = False
         if not is_valid:
             # Only repair syntax errors and schema mismatches
             repaireable_errors = [
@@ -66,6 +68,7 @@ def run_sql_pipeline(
             
             if should_repair:
                 # Try to repair if validation failed
+                repair_triggered = True
                 sess_logger.info("Repair Triggered due to validation failure")
                 repaired_query, repair_ok = repair_sql(
                     question,
@@ -102,6 +105,7 @@ def run_sql_pipeline(
                 schema_registry
             )
             if repair_ok:
+                repair_triggered = True  # track execution-phase repair too
                 sess_logger.info(f"Repair Result (repaired SQL) for failed executed query: {repaired_query}")
                 results, cols = execute_sql_query(sql_handler, repaired_query)
                 sql_query = repaired_query
@@ -127,12 +131,13 @@ def run_sql_pipeline(
             "timestamp": datetime.utcnow().isoformat(),
             "session_id": session_id,
             "question": question,
+            "pipeline_type": "sql",
             "generated_sql": sql_query,
             "validation_passed": is_valid,
             "validation_error": None if is_valid else error_msg,
-            "repair_triggered": not is_valid and should_repair,
-            "repair_reason": error_msg if not is_valid and should_repair else None,
-            "repair_sql": sql_query if not is_valid and should_repair else None,
+            "repair_triggered": repair_triggered,
+            "repair_reason": error_msg if repair_triggered else None,
+            "repair_sql": sql_query if repair_triggered else None,
             "execution_success": execution_success,
             "execution_error": execution_error,
             "rows_returned": len(results) if isinstance(results, list) else 0,
@@ -190,6 +195,18 @@ def run_rag_pipeline(session_id: str, question: str):
         sources = list(set([meta["source"] for meta in rag_results["metadatas"] if meta.get("source")]))
         
         execution_time = int((time.time() - start) * 1000)
+
+        # Log RAG pipeline metrics
+        log_query_entry({
+            "timestamp": datetime.utcnow().isoformat(),
+            "session_id": session_id,
+            "question": question,
+            "pipeline_type": "rag",
+            "sources_found": len(sources),
+            "chunks_retrieved": len(rag_results["documents"][0]) if rag_results["documents"] else 0,
+            "has_results": True,
+            "latency_sec": round(execution_time / 1000, 2)
+        })
 
         return {
             "answer": answer,

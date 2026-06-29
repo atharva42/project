@@ -5,6 +5,10 @@ from google import genai
 from google.genai import types
 from load_keys import load_config
 from services.pipeline import run_sql_pipeline, run_rag_pipeline
+import time
+from datetime import datetime
+from services.session_manager import log_query_entry
+
 
 
 def get_user_friendly_error(error_str: str) -> str:
@@ -444,6 +448,7 @@ def run_agent(session_id: str, question: str) -> dict:
     Returns:
         Final answer dictionary with results and route information
     """
+
     initial_state = {
         "session_id": session_id,
         "question": question,
@@ -454,6 +459,8 @@ def run_agent(session_id: str, question: str) -> dict:
         "error": None
     }
     
+    agent_start = time.time()
+
     try:
         # Run the agent
         final_state = agent.invoke(initial_state)
@@ -469,7 +476,24 @@ def run_agent(session_id: str, question: str) -> dict:
                 "route": final_state["route"],
                 "type": "error"
             }
-        
+
+        # Log metrics for combined + rag routes
+        latency = round(time.time() - agent_start, 2)
+        route = final_state["route"]
+        if route in ("both_sql_first", "both_rag_first", "both_parallel"):
+            sql_r = final_state.get("sql_result") or {}
+            rag_r = final_state.get("rag_result") or {}
+            log_query_entry({
+                "timestamp": datetime.utcnow().isoformat(),
+                "session_id": session_id,
+                "question": question,
+                "pipeline_type": route,
+                "execution_success": "error" not in final_answer,
+                "sql_rows_returned": len(sql_r.get("results") or []),
+                "rag_sources_found": len(rag_r.get("sources") or []),
+                "latency_sec": latency
+            })
+
         return final_answer
         
     except Exception as e:
