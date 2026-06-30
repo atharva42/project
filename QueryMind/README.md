@@ -108,6 +108,35 @@ A proper RAGAS evaluation (faithfulness, context precision, answer relevancy) on
 
 ---
 
+## Evaluation Metrics
+
+Evaluated on **95 real queries** across all pipeline types. Metrics are computed from production logs using `eval/analyze_logs.py`.
+
+| Metric | Result | Sample Size |
+|--------|--------|-------------|
+| P50 Latency | 1.99s | 95 queries |
+| **P95 Latency** | **8.38s** | 95 queries |
+| SQL Execution Success Rate | **100%** (54/54) | 54 SQL queries |
+| SQL Self-Repair Rate | 0% — all queries valid on first attempt | 54 SQL queries |
+| **Routing Accuracy** | **87.0%** (20/23 labeled questions) | 23-question golden set |
+
+**Latency by route:**
+
+| Route | P50 | P95 |
+|-------|-----|-----|
+| SQL only | 1.85s | 2.84s |
+| RAG only | 2.15s | 3.03s |
+| Conditional (both_sql / both_rag) | 7.9s | 9.1s |
+| Parallel (both_parallel) | 6.7s | 7.7s |
+
+Combined routes are 3–4× slower than single-source — expected, as they run two LLM pipeline calls sequentially plus a synthesis step.
+
+**Routing accuracy methodology:** 23 labeled questions covering all 5 route types were matched against production logs. 18/23 verified correct, 2 untested (counted as failures, conservative), 3 excluded (`none` route requires mixed CSV+PDF session). One confirmed misclassification: off-topic question routed to SQL instead of `none` in a CSV-only session (the single-modality shortcut bypasses the LLM router, so the SQL generator correctly rejects it — wrong route classification, correct user experience).
+
+> Full methodology and raw numbers: [`eval/METRICS_REPORT.md`](eval/METRICS_REPORT.md)
+
+---
+
 ## Known Limitations & Why the Demo Might Misbehave
 
 Documenting these because hitting one of them shouldn't read as a bug in the code:
