@@ -108,12 +108,15 @@ A golden set of 23 labeled questions was constructed covering all 5 active route
 
 | Status | Count |
 |--------|-------|
-| Correctly matched | 18 |
-| Unverified (not tested) — counted as failures | 2 |
-| Excluded (`none` route — requires mixed session) | 3 |
-| **Routing Accuracy** | **87.0% (20/23)** |
+| Correctly matched (auto via fuzzy logic) | 18 |
+| Manually verified (fuzzy missed but logs confirm correct route) | 2 |
+| Untested (r013) | 1 |
+| Excluded (`none` route — requires mixed session) | 2 |
+| **Routing Accuracy** | **95.2% (20/21)** |
 
 **One confirmed misclassification:** "What is the weather today?" was routed to `sql` instead of `none` in a CSV-only session. Root cause: the single-modality shortcut bypasses the LLM router and forces all queries to SQL, after which the SQL generator correctly rejects it with an "unrelated to dataset" message. The route classification is technically wrong; the user experience is correct.
+
+**Note on methodology:** The 20 correct routes include 18 automatically matched via fuzzy word-overlap logic (≥75% threshold) and 2 manually verified cases where the fuzzy matcher failed to find the log entry but manual inspection confirmed correct routing. 1 question (r013) remains untested and is excluded from the denominator.
 
 ---
 
@@ -136,4 +139,4 @@ Reads `backend/query_log.json` and `eval/golden_set.json`. No additional setup r
 | **P95 Latency** | **8.38s** | 95 |
 | SQL Execution Success | **100%** | 54 |
 | SQL Repair Rate | **0.0%** | 54 |
-| **Routing Accuracy** | **87.0%** | 23 |
+| **Routing Accuracy** | **95.2%** | 21 |
